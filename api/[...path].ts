@@ -763,9 +763,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json({ message: `Content must be approved. Current: ${(social as any)[statusKey]}` });
       }
 
-      const BUFFER_TOKEN = process.env.BUFFER_TOKEN || "H5wEKXsJAJctr0cTYMDTUs1UbD0zZWUPnfv19IxhRpq";
-      const BUFFER_IG_CHANNEL = process.env.BUFFER_IG_CHANNEL || "69b336d87be9f8b1714da537";
-      const BUFFER_X_CHANNEL = process.env.BUFFER_X_CHANNEL || "69b337177be9f8b1714da5e4";
+      const BUFFER_TOKEN = (process.env.BUFFER_TOKEN || "H5wEKXsJAJctr0cTYMDTUs1UbD0zZWUPnfv19IxhRpq").trim();
+      const BUFFER_IG_CHANNEL = (process.env.BUFFER_IG_CHANNEL || "69b336d87be9f8b1714da537").trim();
+      const BUFFER_X_CHANNEL = (process.env.BUFFER_X_CHANNEL || "69b337177be9f8b1714da5e4").trim();
 
       const channelId = platform === "instagram" ? BUFFER_IG_CHANNEL : BUFFER_X_CHANNEL;
       const text = platform === "instagram" ? social.instagramCaption : social.twitterPost;
