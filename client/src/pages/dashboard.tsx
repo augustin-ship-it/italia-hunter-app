@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import type { Property, PropertyWithSocial, SocialContent } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +42,8 @@ const statusBadge: Record<string, string> = {
   rejected: "border-red-300 text-red-500 bg-transparent",
 };
 
+const PROPERTY_TYPES = ["trullo", "masseria", "casale", "palazzo", "villa", "house"];
+
 /* ═══════════════════════════════════════════════════════════════
    TAB 1: RECOMMENDATIONS
    ═══════════════════════════════════════════════════════════════ */
@@ -69,7 +71,7 @@ function RecommendationsTab() {
   });
 
   if (isLoading) {
-    return <div className="space-y-2">{[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-20" />)}</div>;
+    return <div className="space-y-3">{[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-32 rounded-lg" />)}</div>;
   }
 
   const qualified = data?.properties || [];
@@ -85,85 +87,104 @@ function RecommendationsTab() {
   }
 
   return (
-    <div className="space-y-2" data-testid="recommendations-tab">
-      <div className="text-xs text-muted-foreground mb-2">
+    <div data-testid="recommendations-tab">
+      <div className="text-xs text-muted-foreground mb-3">
         {all.length} properties with social potential score &ge; 70
       </div>
-      <div className="border rounded divide-y">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {all.map((p) => (
           <div
             key={p.id}
-            className="flex items-center gap-3 px-3 py-2.5 hover:bg-accent/30 transition-colors"
+            className="border rounded-lg overflow-hidden hover:shadow-sm transition-shadow"
             data-testid={`rec-property-${p.id}`}
           >
             <Link href={`/properties/${p.id}`}>
               {p.leadPhoto ? (
-                <img src={p.leadPhoto} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0" loading="lazy" />
+                <img src={p.leadPhoto} alt="" className="w-full h-40 object-cover" loading="lazy" />
               ) : (
-                <div className="w-14 h-14 rounded-lg bg-muted shrink-0" />
+                <div className="w-full h-40 bg-muted" />
               )}
             </Link>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <Link href={`/properties/${p.id}`} className="hover:underline">
-                  <span className="text-sm font-medium truncate block">{p.town}, {p.province}</span>
-                </Link>
-                <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 capitalize shrink-0">
-                  {p.propertyType}
-                </Badge>
+            <div className="p-3 space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <Link href={`/properties/${p.id}`} className="hover:underline">
+                    <span className="text-sm font-semibold truncate block">{p.town}, {p.province}</span>
+                  </Link>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 capitalize shrink-0">
+                      {p.propertyType}
+                    </Badge>
+                    <span className="text-[11px] text-muted-foreground">{p.region}</span>
+                  </div>
+                </div>
                 <Badge variant="outline" className={`text-[10px] px-1.5 py-0 h-4 shrink-0 ${statusBadge[p.status] || ""}`}>
                   {p.status}
                 </Badge>
               </div>
-              <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
-                <span>{fmt.format(p.price)}</span>
-                {p.size && <span>{p.size} m²</span>}
-                <span>{p.region}</span>
-                <span>Score {p.compositeScore}</span>
+
+              <div className="flex items-center justify-between">
+                <span className="text-lg font-bold">{fmt.format(p.price)}</span>
+                {p.size && <span className="text-xs text-muted-foreground">{p.size} m²</span>}
               </div>
-            </div>
-            <span className="inline-flex items-center gap-0.5 text-sm font-semibold text-amber-500 shrink-0">
-              <Sparkles className="h-3.5 w-3.5" />
-              {p.socialPotentialScore}
-            </span>
-            <div className="flex gap-0.5 shrink-0">
-              {p.status === "qualified" && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
-                  onClick={() => statusMutation.mutate({ id: p.id, status: "selected" })}
-                  data-testid={`rec-select-${p.id}`}
-                >
-                  <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
-                  Select
-                </Button>
-              )}
-              {p.status === "qualified" && (
-                <button
-                  onClick={() => statusMutation.mutate({ id: p.id, status: "rejected" })}
-                  className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-red-500 transition-colors"
-                  data-testid={`rec-skip-${p.id}`}
-                  title="Skip"
-                >
-                  <XCircle className="h-3.5 w-3.5" />
-                </button>
-              )}
-              {p.status === "selected" && (
-                <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 border-sky-300 text-sky-600 bg-sky-50">
-                  Selected
+
+              <div className="flex items-center gap-2">
+                <Badge className="bg-muted text-foreground border border-border text-[10px] px-1.5 py-0 h-5 font-medium">
+                  Score {p.compositeScore}
                 </Badge>
+                <Badge className="bg-amber-50 text-amber-600 border border-amber-200 text-[10px] px-1.5 py-0 h-5 font-medium dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-800">
+                  <Sparkles className="h-2.5 w-2.5 mr-0.5" />
+                  Social {p.socialPotentialScore}
+                </Badge>
+              </div>
+
+              {p.description && (
+                <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+                  {p.description.slice(0, 80)}{p.description.length > 80 ? "…" : ""}
+                </p>
               )}
-              <a
-                href={p.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
-                title="Idealista"
-                data-testid={`rec-link-${p.id}`}
-              >
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
+
+              <div className="flex items-center gap-1.5 pt-1">
+                {p.status === "qualified" && (
+                  <>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="h-7 text-xs flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+                      onClick={() => statusMutation.mutate({ id: p.id, status: "selected" })}
+                      data-testid={`rec-select-${p.id}`}
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                      Select for Content
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs text-muted-foreground hover:text-red-500 hover:border-red-200"
+                      onClick={() => statusMutation.mutate({ id: p.id, status: "rejected" })}
+                      data-testid={`rec-skip-${p.id}`}
+                    >
+                      <XCircle className="h-3.5 w-3.5 mr-1" />
+                      Skip
+                    </Button>
+                  </>
+                )}
+                {p.status === "selected" && (
+                  <Badge variant="outline" className="text-[10px] px-2 py-0.5 h-5 border-sky-300 text-sky-600 bg-sky-50">
+                    Selected
+                  </Badge>
+                )}
+                <a
+                  href={p.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-auto p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                  title="Idealista"
+                  data-testid={`rec-link-${p.id}`}
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              </div>
             </div>
           </div>
         ))}
@@ -191,7 +212,9 @@ function PropertyMap({
   const markersRef = useRef<any[]>([]);
   const leafletRef = useRef<any>(null);
   const [mapReady, setMapReady] = useState(false);
-  const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
+
+  const onStatusChangeRef = useRef(onStatusChange);
+  onStatusChangeRef.current = onStatusChange;
 
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return;
@@ -210,6 +233,23 @@ function PropertyMap({
         subdomains: "abcd",
         maxZoom: 19,
       }).addTo(map);
+
+      // Event delegation for popup action buttons
+      map.on("popupopen", (e: any) => {
+        const container = e.popup.getElement();
+        if (!container) return;
+        const handleClick = (ev: Event) => {
+          const target = (ev.target as HTMLElement).closest("[data-action]") as HTMLElement | null;
+          if (!target) return;
+          const action = target.dataset.action;
+          const id = Number(target.dataset.id);
+          if (!action || !id) return;
+          if (action === "select") onStatusChangeRef.current(id, "selected");
+          if (action === "reject") onStatusChangeRef.current(id, "rejected");
+        };
+        container.addEventListener("click", handleClick);
+      });
+
       mapInstanceRef.current = map;
       setMapReady(true);
     };
@@ -235,7 +275,28 @@ function PropertyMap({
         iconAnchor: [13, 13],
       });
       const marker = L.marker([p.latitude!, p.longitude!], { icon }).addTo(map);
-      marker.on("click", () => setSelectedProperty(p));
+
+      const photo = p.leadPhoto ? `<img src="${p.leadPhoto}" style="width:56px;height:42px;border-radius:6px;object-fit:cover;" />` : "";
+      const price = fmt.format(p.price);
+      const size = p.size ? `${p.size}m²` : "";
+      const popupHtml = `<div style="min-width:220px;font-family:system-ui;font-size:13px;">
+  <div style="display:flex;gap:8px;align-items:start;">
+    ${photo}
+    <div style="flex:1;min-width:0;">
+      <div style="font-weight:600;line-height:1.3;">${p.town}, ${p.province}</div>
+      <div style="font-size:11px;color:#888;margin-top:1px;">${p.region} · ${p.propertyType}</div>
+      <div style="font-weight:600;margin-top:2px;">${price}</div>
+      <div style="font-size:11px;color:#888;">${size}${size ? " · " : ""}Score ${p.compositeScore} · Social ${p.socialPotentialScore}</div>
+    </div>
+  </div>
+  <div style="display:flex;gap:4px;margin-top:6px;">
+    <button data-action="select" data-id="${p.id}" style="flex:1;padding:4px 8px;border-radius:6px;border:1px solid #bbf7d0;background:#f0fdf4;color:#16a34a;font-size:11px;font-weight:600;cursor:pointer;">Select</button>
+    <button data-action="reject" data-id="${p.id}" style="flex:1;padding:4px 8px;border-radius:6px;border:1px solid #fecaca;background:#fef2f2;color:#ef4444;font-size:11px;font-weight:600;cursor:pointer;">Skip</button>
+    <a href="${p.url}" target="_blank" rel="noopener noreferrer" style="padding:4px 8px;border-radius:6px;border:1px solid #e5e7eb;background:#f9fafb;color:#6b7280;font-size:11px;font-weight:500;text-decoration:none;cursor:pointer;">Idealista ↗</a>
+  </div>
+</div>`;
+
+      marker.bindPopup(popupHtml, { maxWidth: 300, minWidth: 220, className: "property-popup" });
       markersRef.current.push(marker);
     });
     if (withCoords.length > 0) {
@@ -248,54 +309,6 @@ function PropertyMap({
     <div className="relative" data-testid="property-map">
       <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
       <div ref={mapRef} className={`w-full ${height} rounded border overflow-hidden`} />
-      {selectedProperty && (
-        <div className="absolute bottom-3 left-3 right-3 max-w-sm z-[1000]" data-testid="map-popup">
-          <div className="bg-card border rounded p-3">
-            <div className="flex gap-2.5">
-              {selectedProperty.leadPhoto && (
-                <Link href={`/properties/${selectedProperty.id}`}>
-                  <img src={selectedProperty.leadPhoto} alt="" className="w-16 h-12 rounded object-cover shrink-0" />
-                </Link>
-              )}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-start justify-between gap-1">
-                  <Link href={`/properties/${selectedProperty.id}`} className="hover:underline">
-                    <p className="text-sm font-medium truncate">{selectedProperty.town}, {selectedProperty.province}</p>
-                  </Link>
-                  <button onClick={() => setSelectedProperty(null)} className="p-0.5 rounded hover:bg-accent text-muted-foreground shrink-0">
-                    <XCircle className="h-3 w-3" />
-                  </button>
-                </div>
-                <p className="text-xs text-muted-foreground">{selectedProperty.region}</p>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-sm font-medium">{fmt.format(selectedProperty.price)}</span>
-                  <span className="text-xs text-muted-foreground">{selectedProperty.compositeScore}</span>
-                </div>
-                <div className="flex gap-1 mt-1.5">
-                  <button
-                    onClick={() => { onStatusChange(selectedProperty.id, "selected"); setSelectedProperty(null); }}
-                    className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-emerald-600"
-                    data-testid={`map-select-${selectedProperty.id}`}
-                  >
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    onClick={() => { onStatusChange(selectedProperty.id, "rejected"); setSelectedProperty(null); }}
-                    className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-red-500"
-                    data-testid={`map-reject-${selectedProperty.id}`}
-                  >
-                    <XCircle className="h-3.5 w-3.5" />
-                  </button>
-                  <a href={selectedProperty.url} target="_blank" rel="noopener noreferrer"
-                    className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground">
-                    <ExternalLink className="h-3.5 w-3.5" />
-                  </a>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -387,66 +400,44 @@ function PropertiesTable({
   );
 }
 
-const PAGE_SIZE = 50;
-
-function FullListingTab() {
-  const [view, setView] = useState<"list" | "map" | "split">("list");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [regionFilter, setRegionFilter] = useState("all");
-  const [minPrice, setMinPrice] = useState("");
-  const [maxPrice, setMaxPrice] = useState("");
-  const [sortBy, setSortBy] = useState("-compositeScore");
-  const [page, setPage] = useState(1);
-  const { toast } = useToast();
-
-  useEffect(() => { setPage(1); }, [statusFilter, regionFilter, minPrice, maxPrice, sortBy]);
-
-  const queryParams = new URLSearchParams();
-  queryParams.set("status", statusFilter);
-  queryParams.set("sort", sortBy);
-  queryParams.set("limit", String(PAGE_SIZE));
-  queryParams.set("offset", String((page - 1) * PAGE_SIZE));
-  if (regionFilter !== "all") queryParams.set("region", regionFilter);
-  if (minPrice) queryParams.set("minPrice", minPrice);
-  if (maxPrice) queryParams.set("maxPrice", maxPrice);
-
-  const queryKey = `/api/properties?${queryParams.toString()}`;
-
-  const { data, isLoading } = useQuery<{ properties: Property[]; total: number }>({
-    queryKey: [queryKey],
-  });
-
-  const { data: allData } = useQuery<{ properties: Property[]; total: number }>({
-    queryKey: ["/api/properties?status=all&limit=1000"],
-  });
-
-  const regions = allData
-    ? [...new Set(allData.properties.map((p) => p.region))].sort()
-    : [];
-
-  const statusMutation = useMutation({
-    mutationFn: async ({ id, status }: { id: number; status: string }) => {
-      await apiRequest("PATCH", `/api/properties/${id}/status`, { status });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries();
-      toast({ title: "Status updated" });
-    },
-    onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    },
-  });
-
-  const handleStatusChange = (id: number, status: string) => {
-    statusMutation.mutate({ id, status });
-  };
-
-  const properties = data?.properties || [];
-  const total = data?.total || 0;
+/* ── Filter Bar ── */
+function FilterBar({
+  statusFilter, setStatusFilter,
+  regionFilter, setRegionFilter,
+  propertyTypeFilter, setPropertyTypeFilter,
+  minPrice, setMinPrice,
+  maxPrice, setMaxPrice,
+  minScore, setMinScore,
+  maxScore, setMaxScore,
+  minSocial, setMinSocial,
+  maxSocial, setMaxSocial,
+  sortBy, setSortBy,
+  total,
+  view, setView,
+  regions,
+  overlay,
+}: {
+  statusFilter: string; setStatusFilter: (v: string) => void;
+  regionFilter: string; setRegionFilter: (v: string) => void;
+  propertyTypeFilter: string; setPropertyTypeFilter: (v: string) => void;
+  minPrice: string; setMinPrice: (v: string) => void;
+  maxPrice: string; setMaxPrice: (v: string) => void;
+  minScore: string; setMinScore: (v: string) => void;
+  maxScore: string; setMaxScore: (v: string) => void;
+  minSocial: string; setMinSocial: (v: string) => void;
+  maxSocial: string; setMaxSocial: (v: string) => void;
+  sortBy: string; setSortBy: (v: string) => void;
+  total: number;
+  view: "list" | "map" | "split"; setView: (v: "list" | "map" | "split") => void;
+  regions: string[];
+  overlay: boolean;
+}) {
+  const wrapperClass = overlay
+    ? "absolute top-3 left-3 right-3 z-[1000] bg-white/90 backdrop-blur-sm dark:bg-card/90 rounded-lg shadow-md border p-2"
+    : "";
 
   return (
-    <div className="space-y-3" data-testid="full-listing-tab">
-      {/* Filters */}
+    <div className={wrapperClass} data-testid="filter-bar">
       <div className="flex flex-wrap items-center gap-2">
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="h-7 w-[110px] text-xs" data-testid="filter-status">
@@ -474,10 +465,34 @@ function FullListingTab() {
           </SelectContent>
         </Select>
 
+        <Select value={propertyTypeFilter} onValueChange={setPropertyTypeFilter}>
+          <SelectTrigger className="h-7 w-[110px] text-xs" data-testid="filter-property-type">
+            <SelectValue placeholder="Type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All types</SelectItem>
+            {PROPERTY_TYPES.map((t) => (
+              <SelectItem key={t} value={t} className="capitalize">{t}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
         <div className="flex items-center gap-1">
-          <Input type="number" placeholder="Min €" value={minPrice} onChange={(e) => setMinPrice(e.target.value)} className="h-7 w-[80px] text-xs" data-testid="filter-min-price" />
+          <Input type="number" placeholder="Min €" value={minPrice} onChange={(e) => setMinPrice(e.target.value)} className="h-7 w-[70px] text-xs" data-testid="filter-min-price" />
           <span className="text-xs text-muted-foreground">–</span>
-          <Input type="number" placeholder="Max €" value={maxPrice} onChange={(e) => setMaxPrice(e.target.value)} className="h-7 w-[80px] text-xs" data-testid="filter-max-price" />
+          <Input type="number" placeholder="Max €" value={maxPrice} onChange={(e) => setMaxPrice(e.target.value)} className="h-7 w-[70px] text-xs" data-testid="filter-max-price" />
+        </div>
+
+        <div className="flex items-center gap-1">
+          <Input type="number" placeholder="Score ≥" value={minScore} onChange={(e) => setMinScore(e.target.value)} className="h-7 w-[65px] text-xs" data-testid="filter-min-score" />
+          <span className="text-xs text-muted-foreground">–</span>
+          <Input type="number" placeholder="≤" value={maxScore} onChange={(e) => setMaxScore(e.target.value)} className="h-7 w-[55px] text-xs" data-testid="filter-max-score" />
+        </div>
+
+        <div className="flex items-center gap-1">
+          <Input type="number" placeholder="Social ≥" value={minSocial} onChange={(e) => setMinSocial(e.target.value)} className="h-7 w-[65px] text-xs" data-testid="filter-min-social" />
+          <span className="text-xs text-muted-foreground">–</span>
+          <Input type="number" placeholder="≤" value={maxSocial} onChange={(e) => setMaxSocial(e.target.value)} className="h-7 w-[55px] text-xs" data-testid="filter-max-social" />
         </div>
 
         <Select value={sortBy} onValueChange={setSortBy}>
@@ -510,6 +525,101 @@ function FullListingTab() {
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+const PAGE_SIZE = 50;
+
+function FullListingTab() {
+  const [view, setView] = useState<"list" | "map" | "split">("list");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [regionFilter, setRegionFilter] = useState("all");
+  const [propertyTypeFilter, setPropertyTypeFilter] = useState("all");
+  const [minPrice, setMinPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
+  const [minScore, setMinScore] = useState("");
+  const [maxScore, setMaxScore] = useState("");
+  const [minSocial, setMinSocial] = useState("");
+  const [maxSocial, setMaxSocial] = useState("");
+  const [sortBy, setSortBy] = useState("-compositeScore");
+  const [page, setPage] = useState(1);
+  const { toast } = useToast();
+
+  useEffect(() => { setPage(1); }, [statusFilter, regionFilter, propertyTypeFilter, minPrice, maxPrice, minScore, maxScore, minSocial, maxSocial, sortBy]);
+
+  const queryParams = new URLSearchParams();
+  queryParams.set("status", statusFilter);
+  queryParams.set("sort", sortBy);
+  queryParams.set("limit", String(PAGE_SIZE));
+  queryParams.set("offset", String((page - 1) * PAGE_SIZE));
+  if (regionFilter !== "all") queryParams.set("region", regionFilter);
+  if (propertyTypeFilter !== "all") queryParams.set("propertyType", propertyTypeFilter);
+  if (minPrice) queryParams.set("minPrice", minPrice);
+  if (maxPrice) queryParams.set("maxPrice", maxPrice);
+  if (minScore) queryParams.set("minScore", minScore);
+  if (maxScore) queryParams.set("maxScore", maxScore);
+  if (minSocial) queryParams.set("minSocialScore", minSocial);
+  if (maxSocial) queryParams.set("maxSocialScore", maxSocial);
+
+  const queryKey = `/api/properties?${queryParams.toString()}`;
+
+  const { data, isLoading } = useQuery<{ properties: Property[]; total: number }>({
+    queryKey: [queryKey],
+  });
+
+  const { data: allData } = useQuery<{ properties: Property[]; total: number }>({
+    queryKey: ["/api/properties?status=all&limit=1000"],
+  });
+
+  const regions = allData
+    ? [...new Set(allData.properties.map((p) => p.region))].sort()
+    : [];
+
+  const statusMutation = useMutation({
+    mutationFn: async ({ id, status }: { id: number; status: string }) => {
+      await apiRequest("PATCH", `/api/properties/${id}/status`, { status });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries();
+      toast({ title: "Status updated" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const handleStatusChange = useCallback((id: number, status: string) => {
+    statusMutation.mutate({ id, status });
+  }, []);
+
+  const properties = data?.properties || [];
+  const total = data?.total || 0;
+
+  const filterProps = {
+    statusFilter, setStatusFilter,
+    regionFilter, setRegionFilter,
+    propertyTypeFilter, setPropertyTypeFilter,
+    minPrice, setMinPrice,
+    maxPrice, setMaxPrice,
+    minScore, setMinScore,
+    maxScore, setMaxScore,
+    minSocial, setMinSocial,
+    maxSocial, setMaxSocial,
+    sortBy, setSortBy,
+    total,
+    view, setView,
+    regions,
+  };
+
+  const showOverlayFilters = view === "map" || view === "split";
+
+  return (
+    <div className="space-y-3" data-testid="full-listing-tab">
+      {/* Filters — normal position for list view */}
+      {!showOverlayFilters && (
+        <FilterBar {...filterProps} overlay={false} />
+      )}
 
       {/* Content */}
       {isLoading ? (
@@ -517,14 +627,20 @@ function FullListingTab() {
       ) : properties.length === 0 ? (
         <div className="py-12 text-center text-sm text-muted-foreground">No properties found. Adjust filters or import data.</div>
       ) : view === "map" ? (
-        <PropertyMap properties={properties} onStatusChange={handleStatusChange} />
+        <div className="relative">
+          <FilterBar {...filterProps} overlay={true} />
+          <PropertyMap properties={properties} onStatusChange={handleStatusChange} />
+        </div>
       ) : view === "split" ? (
-        <div className="flex gap-3 min-h-[600px]" data-testid="split-view">
-          <div className="w-1/2 overflow-y-auto max-h-[700px]">
-            <PropertiesTable properties={properties} onStatusChange={handleStatusChange} />
-          </div>
-          <div className="w-1/2">
-            <PropertyMap properties={properties} onStatusChange={handleStatusChange} height="h-full min-h-[600px]" />
+        <div className="relative">
+          <FilterBar {...filterProps} overlay={true} />
+          <div className="flex gap-3 min-h-[600px] pt-14" data-testid="split-view">
+            <div className="w-1/2 overflow-y-auto max-h-[700px]">
+              <PropertiesTable properties={properties} onStatusChange={handleStatusChange} />
+            </div>
+            <div className="w-1/2">
+              <PropertyMap properties={properties} onStatusChange={handleStatusChange} height="h-full min-h-[600px]" />
+            </div>
           </div>
         </div>
       ) : (
@@ -771,24 +887,22 @@ function PublishQueueCard({ property, section }: { property: PropertyWithSocial;
                 <CarouselPreview photos={photos} />
               </div>
             )}
-            <div className="p-3">
-              <Tabs defaultValue="instagram">
-                <TabsList className="h-7 mb-3">
-                  <TabsTrigger value="instagram" className="text-[11px] h-6 px-2.5 gap-1"><Instagram className="h-3 w-3" /> IG</TabsTrigger>
-                  <TabsTrigger value="twitter" className="text-[11px] h-6 px-2.5 gap-1"><Twitter className="h-3 w-3" /> X</TabsTrigger>
-                </TabsList>
-                {platforms.map((platform) => (
-                  <TabsContent key={platform} value={platform} className="mt-0">
-                    <PlatformBlock propertyId={property.id} platform={platform} social={social} />
-                    {platform === "instagram" && social.instagramFirstComment && (
-                      <div className="mt-2 space-y-1">
-                        <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">First comment (hashtags)</div>
-                        <div className="text-xs bg-muted/30 rounded-lg p-2 border border-border/30 text-muted-foreground">{social.instagramFirstComment}</div>
-                      </div>
-                    )}
-                  </TabsContent>
-                ))}
-              </Tabs>
+            <div className="p-3 space-y-4">
+              {/* IG and X side by side instead of tabs */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <PlatformBlock propertyId={property.id} platform="instagram" social={social} />
+                  {social.instagramFirstComment && (
+                    <div className="mt-2 space-y-1">
+                      <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">First comment (hashtags)</div>
+                      <div className="text-xs bg-muted/30 rounded-lg p-2 border border-border/30 text-muted-foreground">{social.instagramFirstComment}</div>
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <PlatformBlock propertyId={property.id} platform="twitter" social={social} />
+                </div>
+              </div>
             </div>
           </div>
 
@@ -802,16 +916,16 @@ function PublishQueueCard({ property, section }: { property: PropertyWithSocial;
             </Link>
             <div className="ml-auto flex gap-1.5">
               {social.instagramStatus === "approved" && (
-                <Button size="sm" variant="outline" className="h-6 text-[10px] px-2 gap-1 border-pink-200 text-pink-600 hover:bg-pink-50 dark:border-pink-800 dark:text-pink-400 dark:hover:bg-pink-950/30" onClick={() => publishMutation.mutate({ platform: "instagram" })} disabled={publishMutation.isPending} data-testid={`publish-ig-${property.id}`}>
-                  <Send className="h-3 w-3" /> {publishMutation.isPending && publishMutation.variables?.platform === "instagram" ? "..." : "Publish IG"}
+                <Button size="sm" className="h-7 text-xs px-3 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => publishMutation.mutate({ platform: "instagram" })} disabled={publishMutation.isPending} data-testid={`publish-ig-${property.id}`}>
+                  <Send className="h-3 w-3" /> {publishMutation.isPending && publishMutation.variables?.platform === "instagram" ? "Publishing…" : "Publish IG"}
                 </Button>
               )}
               {social.instagramStatus === "posted" && (
                 <Badge variant="outline" className="h-6 text-[10px] px-2 gap-1 border-pink-200/60 text-pink-500 bg-pink-50/50"><CheckCircle2 className="h-3 w-3" /> IG posted</Badge>
               )}
               {social.twitterStatus === "approved" && (
-                <Button size="sm" variant="outline" className="h-6 text-[10px] px-2 gap-1 border-sky-200 text-sky-600 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-400 dark:hover:bg-sky-950/30" onClick={() => publishMutation.mutate({ platform: "twitter" })} disabled={publishMutation.isPending} data-testid={`publish-x-${property.id}`}>
-                  <Send className="h-3 w-3" /> {publishMutation.isPending && publishMutation.variables?.platform === "twitter" ? "..." : "Publish X"}
+                <Button size="sm" className="h-7 text-xs px-3 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => publishMutation.mutate({ platform: "twitter" })} disabled={publishMutation.isPending} data-testid={`publish-x-${property.id}`}>
+                  <Send className="h-3 w-3" /> {publishMutation.isPending && publishMutation.variables?.platform === "twitter" ? "Publishing…" : "Publish X"}
                 </Button>
               )}
               {social.twitterStatus === "posted" && (
@@ -848,7 +962,6 @@ function PublishQueueTab() {
     const s = p.socialContent;
     return s && s.instagramStatus === "posted" && s.twitterStatus === "posted";
   });
-  // Partially approved (one platform approved but not both, and not fully published)
   const partiallyApproved = items.filter((p) => {
     const s = p.socialContent;
     if (!s) return false;

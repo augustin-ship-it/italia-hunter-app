@@ -320,6 +320,10 @@ async function handleGetProperties(db: Database, query: any) {
     conditions.push("social_potential_score <= ?");
     params.push(Number(query.maxSocialScore));
   }
+  if (query.propertyType) {
+    conditions.push("LOWER(property_type) = LOWER(?)");
+    params.push(query.propertyType);
+  }
   if (query.batchDate) {
     conditions.push("batch_date = ?");
     params.push(query.batchDate);
@@ -626,6 +630,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const field = fieldMap[platform];
       if (!field) return res.status(400).json({ message: "Invalid platform" });
       database.run(`UPDATE social_contents SET ${field} = ? WHERE property_id = ?`, [status, id]);
+
+      // Auto-sync property status based on social content status
+      const socialRow = rowsToObjects(database.exec("SELECT * FROM social_contents WHERE property_id = ?", [id]));
+      if (socialRow.length > 0) {
+        const s = socialRow[0];
+        const igStatus = s.instagram_status;
+        const twStatus = s.twitter_status;
+        if (igStatus === "posted" && twStatus === "posted") {
+          database.run("UPDATE properties SET status = 'posted', updated_at = datetime('now') WHERE id = ?", [id]);
+        } else if (igStatus === "approved" && twStatus === "approved") {
+          database.run("UPDATE properties SET status = 'content_ready', updated_at = datetime('now') WHERE id = ?", [id]);
+        } else if (igStatus === "approved" || twStatus === "approved") {
+          // At least one approved — mark as selected if still qualified
+          database.run("UPDATE properties SET status = 'selected', updated_at = datetime('now') WHERE id = ? AND status = 'qualified'", [id]);
+        }
+      }
+
       persistDb();
       const rows = rowsToObjects(database.exec("SELECT * FROM social_contents WHERE property_id = ?", [id]));
       if (rows.length === 0) return res.status(404).json({ message: "Social content not found" });
@@ -705,6 +726,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
              generated_at = datetime('now')`,
           [item.propertyId, item.instagramCaption || null, item.instagramFirstComment || null, item.twitterPost || null, item.reelScript || null, item.summary || null, carouselJson]
         );
+        // Auto-set property status to 'selected' when content is generated
+        database.run("UPDATE properties SET status = 'selected', updated_at = datetime('now') WHERE id = ? AND status = 'qualified'", [item.propertyId]);
         importCount++;
       }
       persistDb();
@@ -834,6 +857,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (result?.post) {
         const field = platform === "instagram" ? "instagram_status" : "twitter_status";
         database.run(`UPDATE social_contents SET ${field} = 'posted' WHERE property_id = ?`, [propertyId]);
+        // Auto-sync property status
+        const afterPost = rowsToObjects(database.exec("SELECT instagram_status, twitter_status FROM social_contents WHERE property_id = ?", [propertyId]));
+        if (afterPost.length > 0 && afterPost[0].instagram_status === "posted" && afterPost[0].twitter_status === "posted") {
+          database.run("UPDATE properties SET status = 'posted', updated_at = datetime('now') WHERE id = ?", [propertyId]);
+        }
         persistDb();
         return res.status(200).json({ success: true, bufferPostId: result.post.id, status: result.post.status, platform });
       } else {
