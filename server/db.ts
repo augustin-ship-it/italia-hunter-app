@@ -103,5 +103,32 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_batches_date ON batches(date);
 `);
 
+// Seed from SQL dump if database is empty (first deploy)
+const count = (db.prepare("SELECT COUNT(*) as c FROM properties").get() as any).c;
+if (count === 0) {
+  const seedPath = path.resolve(
+    typeof __dirname !== "undefined" ? path.join(__dirname, "..") : process.cwd(),
+    "seed",
+    "seed.sql"
+  );
+  if (fs.existsSync(seedPath)) {
+    console.log(`[db] Seeding database from ${seedPath}...`);
+    // Read seed SQL, skip CREATE TABLE/INDEX statements (already created above)
+    const seedSql = fs.readFileSync(seedPath, "utf-8");
+    const lines = seedSql.split("\n").filter(
+      (l) => l.startsWith("INSERT ")
+    );
+    if (lines.length > 0) {
+      db.exec("BEGIN TRANSACTION;");
+      for (const line of lines) {
+        try { db.exec(line); } catch (e) { /* skip dupes */ }
+      }
+      db.exec("COMMIT;");
+      const newCount = (db.prepare("SELECT COUNT(*) as c FROM properties").get() as any).c;
+      console.log(`[db] Seeded ${newCount} properties`);
+    }
+  }
+}
+
 export default db;
 export { DB_PATH };
