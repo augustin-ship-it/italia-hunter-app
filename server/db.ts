@@ -79,6 +79,7 @@ db.exec(`
     twitter_post TEXT,
     reel_script TEXT,
     summary TEXT,
+    carousel_photos TEXT, -- JSON array of photo URLs
     instagram_status TEXT NOT NULL DEFAULT 'pending',
     twitter_status TEXT NOT NULL DEFAULT 'pending',
     reel_status TEXT NOT NULL DEFAULT 'pending',

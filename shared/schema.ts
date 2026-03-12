@@ -60,6 +60,7 @@ export const socialContentSchema = z.object({
   twitterPost: z.string().nullable(),
   reelScript: z.string().nullable(),
   summary: z.string().nullable(),
+  carouselPhotos: z.array(z.string()).nullable(),
   instagramStatus: contentApprovalEnum.default("pending"),
   twitterStatus: contentApprovalEnum.default("pending"),
   reelStatus: contentApprovalEnum.default("pending"),

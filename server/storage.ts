@@ -58,6 +58,7 @@ function rowToSocialContent(row: any): SocialContent {
     twitterPost: row.twitter_post,
     reelScript: row.reel_script,
     summary: row.summary,
+    carouselPhotos: row.carousel_photos ? JSON.parse(row.carousel_photos) : null,
     instagramStatus: row.instagram_status as ContentApproval,
     twitterStatus: row.twitter_status as ContentApproval,
     reelStatus: row.reel_status as ContentApproval,
@@ -110,7 +111,7 @@ export interface IStorage {
   getProperty(id: number): Promise<PropertyWithSocial | undefined>;
   updatePropertyStatus(id: number, status: PropertyStatus): Promise<Property | undefined>;
   importProperties(items: ImportProperty[]): Promise<{ imported: number; skipped: number; updated: number }>;
-  upsertSocialContent(propertyId: number, data: { instagramCaption: string | null; twitterPost: string | null; reelScript: string | null; summary: string | null }): Promise<SocialContent>;
+  upsertSocialContent(propertyId: number, data: { instagramCaption: string | null; twitterPost: string | null; reelScript: string | null; summary: string | null; carouselPhotos?: string[] | null }): Promise<SocialContent>;
   getSocialContent(propertyId: number): Promise<SocialContent | undefined>;
   updateContentStatus(propertyId: number, platform: string, status: ContentApproval): Promise<SocialContent | undefined>;
   updateContentText(propertyId: number, platform: string, text: string): Promise<SocialContent | undefined>;
@@ -357,17 +358,20 @@ export class SqliteStorage implements IStorage {
     twitterPost: string | null;
     reelScript: string | null;
     summary: string | null;
+    carouselPhotos?: string[] | null;
   }): Promise<SocialContent> {
+    const photosJson = data.carouselPhotos ? JSON.stringify(data.carouselPhotos) : null;
     db.prepare(`
-      INSERT INTO social_contents (property_id, instagram_caption, twitter_post, reel_script, summary, instagram_status, twitter_status, reel_status, generated_at)
-      VALUES (?, ?, ?, ?, ?, 'pending', 'pending', 'pending', datetime('now'))
+      INSERT INTO social_contents (property_id, instagram_caption, twitter_post, reel_script, summary, carousel_photos, instagram_status, twitter_status, reel_status, generated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'pending', 'pending', 'pending', datetime('now'))
       ON CONFLICT(property_id) DO UPDATE SET
         instagram_caption = excluded.instagram_caption,
         twitter_post = excluded.twitter_post,
         reel_script = excluded.reel_script,
         summary = excluded.summary,
+        carousel_photos = excluded.carousel_photos,
         generated_at = datetime('now')
-    `).run(propertyId, data.instagramCaption, data.twitterPost, data.reelScript, data.summary);
+    `).run(propertyId, data.instagramCaption, data.twitterPost, data.reelScript, data.summary, photosJson);
 
     const row = db.prepare("SELECT * FROM social_contents WHERE property_id = ?").get(propertyId) as any;
     return rowToSocialContent(row);
@@ -426,6 +430,7 @@ export class SqliteStorage implements IStorage {
     const rows = db.prepare(`
       SELECT p.*, s.id as s_id, s.property_id as s_property_id,
         s.instagram_caption, s.twitter_post, s.reel_script, s.summary as s_summary,
+        s.carousel_photos as s_carousel_photos,
         s.instagram_status, s.twitter_status, s.reel_status, s.generated_at
       FROM properties p
       INNER JOIN social_contents s ON s.property_id = p.id
@@ -441,6 +446,7 @@ export class SqliteStorage implements IStorage {
         twitterPost: row.twitter_post,
         reelScript: row.reel_script,
         summary: row.s_summary,
+        carouselPhotos: row.s_carousel_photos ? JSON.parse(row.s_carousel_photos) : null,
         instagramStatus: row.instagram_status,
         twitterStatus: row.twitter_status,
         reelStatus: row.reel_status,

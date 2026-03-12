@@ -256,13 +256,14 @@ export async function registerRoutes(
       }
       let imported = 0;
       for (const item of items) {
-        const { propertyId, instagramCaption, twitterPost, reelScript, summary } = item;
+        const { propertyId, instagramCaption, twitterPost, reelScript, summary, carouselPhotos } = item;
         if (!propertyId) continue;
         await storage.upsertSocialContent(propertyId, {
           instagramCaption: instagramCaption || null,
           twitterPost: twitterPost || null,
           reelScript: reelScript || null,
           summary: summary || null,
+          carouselPhotos: carouselPhotos || null,
         });
         imported++;
       }
@@ -287,6 +288,143 @@ export async function registerRoutes(
     try {
       const stats = await storage.getStats();
       res.json(stats);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // POST /api/buffer/publish — publish content to Buffer (IG or X)
+  app.post("/api/buffer/publish", async (req, res) => {
+    try {
+      const { propertyId, platform } = req.body;
+      if (!propertyId || !platform) {
+        return res.status(400).json({ message: "propertyId and platform are required" });
+      }
+      if (!["instagram", "twitter"].includes(platform)) {
+        return res.status(400).json({ message: "Platform must be instagram or twitter" });
+      }
+
+      // Get property and social content
+      const property = await storage.getProperty(propertyId);
+      if (!property || !property.socialContent) {
+        return res.status(404).json({ message: "Property or social content not found" });
+      }
+      const social = property.socialContent;
+
+      // Check content is approved
+      const statusKey = platform === "instagram" ? "instagramStatus" : "twitterStatus";
+      if (social[statusKey] !== "approved") {
+        return res.status(400).json({ message: `Content must be approved before publishing. Current status: ${social[statusKey]}` });
+      }
+
+      const BUFFER_TOKEN = process.env.BUFFER_TOKEN || "H5wEKXsJAJctr0cTYMDTUs1UbD0zZWUPnfv19IxhRpq";
+      const BUFFER_IG_CHANNEL = process.env.BUFFER_IG_CHANNEL || "69b336d87be9f8b1714da537";
+      const BUFFER_X_CHANNEL = process.env.BUFFER_X_CHANNEL || "69b337177be9f8b1714da5e4";
+
+      const channelId = platform === "instagram" ? BUFFER_IG_CHANNEL : BUFFER_X_CHANNEL;
+      const text = platform === "instagram" ? social.instagramCaption : social.twitterPost;
+
+      if (!text) {
+        return res.status(400).json({ message: `No ${platform} content found` });
+      }
+
+      // Build assets — validate images are accessible
+      const photos = social.carouselPhotos || [];
+      let assets: any = undefined;
+      if (photos.length > 0 && platform === "instagram") {
+        // Validate images are still accessible (Idealista URLs can expire)
+        const validPhotos: string[] = [];
+        for (const url of photos) {
+          try {
+            const check = await fetch(url, { method: "HEAD" });
+            if (check.ok && check.headers.get("content-length") !== "0") {
+              validPhotos.push(url);
+            }
+          } catch { /* skip broken URLs */ }
+        }
+        if (validPhotos.length > 0) {
+          assets = { images: validPhotos.map(url => ({ url })) };
+        }
+      } else if (photos.length > 0 && platform === "twitter") {
+        // X supports up to 4 images
+        const validPhotos: string[] = [];
+        for (const url of photos.slice(0, 4)) {
+          try {
+            const check = await fetch(url, { method: "HEAD" });
+            if (check.ok && check.headers.get("content-length") !== "0") {
+              validPhotos.push(url);
+            }
+          } catch { /* skip broken URLs */ }
+        }
+        if (validPhotos.length > 0) {
+          assets = { images: validPhotos.map(url => ({ url })) };
+        }
+      }
+
+      // Build metadata for IG carousels
+      let metadata: any = undefined;
+      if (platform === "instagram") {
+        const igType = assets && assets.images && assets.images.length > 1 ? "carousel" : "post";
+        metadata = {
+          instagram: {
+            type: igType,
+            shouldShareToFeed: true,
+          },
+        };
+      }
+
+      // Create post via Buffer GraphQL API
+      const mutation = `mutation CreatePost($input: CreatePostInput!) {
+        createPost(input: $input) {
+          ... on PostActionSuccess { post { id status text } }
+          ... on NotFoundError { message }
+          ... on UnauthorizedError { message }
+          ... on UnexpectedError { message }
+          ... on InvalidInputError { message }
+          ... on LimitReachedError { message }
+          ... on RestProxyError { message code }
+        }
+      }`;
+
+      const input: any = {
+        channelId,
+        text,
+        schedulingType: "automatic",
+        mode: "shareNow",
+      };
+      if (assets) input.assets = assets;
+      if (metadata) input.metadata = metadata;
+
+      const bufferRes = await fetch("https://api.buffer.com/graphql", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${BUFFER_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query: mutation, variables: { input } }),
+      });
+
+      const bufferData = await bufferRes.json();
+
+      // Check for errors
+      if (bufferData.errors) {
+        return res.status(502).json({ message: "Buffer API error", errors: bufferData.errors });
+      }
+      const result = bufferData.data?.createPost;
+      if (result?.post) {
+        // Success — mark as posted
+        await storage.updateContentStatus(propertyId, platform, "posted");
+        return res.json({
+          success: true,
+          bufferPostId: result.post.id,
+          status: result.post.status,
+          platform,
+        });
+      } else {
+        // Buffer returned an error union type
+        const errMsg = result?.message || "Unknown Buffer error";
+        return res.status(502).json({ message: errMsg });
+      }
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
