@@ -294,14 +294,22 @@ export async function registerRoutes(
   });
 
   // POST /api/buffer/publish — publish content to Buffer (IG or X)
+  // Body: { propertyId, platform, mode?: "now" | "queue" | "schedule", scheduledAt?: ISO string }
   app.post("/api/buffer/publish", async (req, res) => {
     try {
-      const { propertyId, platform } = req.body;
+      const { propertyId, platform, mode, scheduledAt } = req.body;
       if (!propertyId || !platform) {
         return res.status(400).json({ message: "propertyId and platform are required" });
       }
       if (!["instagram", "twitter"].includes(platform)) {
         return res.status(400).json({ message: "Platform must be instagram or twitter" });
+      }
+      const publishMode = mode || "now";
+      if (!["now", "queue", "schedule"].includes(publishMode)) {
+        return res.status(400).json({ message: "Mode must be: now, queue, or schedule" });
+      }
+      if (publishMode === "schedule" && !scheduledAt) {
+        return res.status(400).json({ message: "scheduledAt (ISO datetime) is required for schedule mode" });
       }
 
       // Get property and social content
@@ -345,9 +353,15 @@ export async function registerRoutes(
         }
       }`;
 
+      // Map publish mode to Buffer API mode
+      const bufferMode = publishMode === "now" ? "shareNow" : publishMode === "queue" ? "addToQueue" : "customScheduled";
+
       // Helper to attempt Buffer post
       async function attemptBufferPost(withPhotos: string[]) {
-        const input: any = { channelId, text, schedulingType: "automatic", mode: "shareNow" };
+        const input: any = { channelId, text, schedulingType: "automatic", mode: bufferMode };
+        if (publishMode === "schedule" && scheduledAt) {
+          input.dueAt = scheduledAt;
+        }
         if (withPhotos.length > 0) {
           input.assets = { images: withPhotos.map(u => ({ url: u })) };
         }

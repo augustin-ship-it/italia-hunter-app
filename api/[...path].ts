@@ -128,6 +128,7 @@ async function getDb(): Promise<Database> {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       property_id INTEGER NOT NULL UNIQUE,
       instagram_caption TEXT,
+      instagram_first_comment TEXT,
       twitter_post TEXT,
       reel_script TEXT,
       summary TEXT,
@@ -240,6 +241,7 @@ function rowToSocialContent(row: any) {
     id: row.id,
     propertyId: row.property_id,
     instagramCaption: row.instagram_caption,
+    instagramFirstComment: row.instagram_first_comment,
     twitterPost: row.twitter_post,
     reelScript: row.reel_script,
     summary: row.summary,
@@ -654,7 +656,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const rows = rowsToObjects(
         database.exec(`
           SELECT p.*, s.id as s_id, s.property_id as s_property_id,
-            s.instagram_caption, s.twitter_post, s.reel_script, s.summary as s_summary,
+            s.instagram_caption, s.instagram_first_comment, s.twitter_post, s.reel_script, s.summary as s_summary,
             s.carousel_photos as s_carousel_photos,
             s.instagram_status, s.twitter_status, s.reel_status, s.generated_at
           FROM properties p
@@ -668,6 +670,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           id: row.s_id,
           propertyId: row.s_property_id,
           instagramCaption: row.instagram_caption,
+          instagramFirstComment: row.instagram_first_comment,
           twitterPost: row.twitter_post,
           reelScript: row.reel_script,
           summary: row.s_summary,
@@ -690,16 +693,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (!item.propertyId) continue;
         const carouselJson = item.carouselPhotos ? JSON.stringify(item.carouselPhotos) : null;
         database.run(
-          `INSERT INTO social_contents (property_id, instagram_caption, twitter_post, reel_script, summary, carousel_photos, instagram_status, twitter_status, reel_status, generated_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'pending', 'pending', 'pending', datetime('now'))
+          `INSERT INTO social_contents (property_id, instagram_caption, instagram_first_comment, twitter_post, reel_script, summary, carousel_photos, instagram_status, twitter_status, reel_status, generated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', 'pending', datetime('now'))
            ON CONFLICT(property_id) DO UPDATE SET
              instagram_caption = excluded.instagram_caption,
+             instagram_first_comment = excluded.instagram_first_comment,
              twitter_post = excluded.twitter_post,
              reel_script = excluded.reel_script,
              summary = excluded.summary,
              carousel_photos = excluded.carousel_photos,
              generated_at = datetime('now')`,
-          [item.propertyId, item.instagramCaption || null, item.twitterPost || null, item.reelScript || null, item.summary || null, carouselJson]
+          [item.propertyId, item.instagramCaption || null, item.instagramFirstComment || null, item.twitterPost || null, item.reelScript || null, item.summary || null, carouselJson]
         );
         importCount++;
       }
@@ -795,7 +799,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           input.assets = { images: withPhotos.map((u: string) => ({ url: u })) };
         }
         if (platform === "instagram") {
-          input.metadata = { instagram: { type: withPhotos.length > 1 ? "carousel" : "post", shouldShareToFeed: true } };
+          const igMeta: any = { type: withPhotos.length > 1 ? "carousel" : "post", shouldShareToFeed: true };
+          // Add first comment (hashtags) if available
+          if (social.instagramFirstComment) {
+            igMeta.firstComment = social.instagramFirstComment;
+          }
+          input.metadata = { instagram: igMeta };
         }
         const r = await fetch("https://api.buffer.com/graphql", {
           method: "POST",

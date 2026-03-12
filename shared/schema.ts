@@ -57,6 +57,7 @@ export const socialContentSchema = z.object({
   id: z.number(),
   propertyId: z.number(),
   instagramCaption: z.string().nullable(),
+  instagramFirstComment: z.string().nullable(),
   twitterPost: z.string().nullable(),
   reelScript: z.string().nullable(),
   summary: z.string().nullable(),

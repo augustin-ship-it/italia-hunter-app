@@ -19,7 +19,6 @@ import {
   ChevronRight,
   Instagram,
   Twitter,
-  Video,
   ExternalLink,
   Send,
   Eye,
@@ -28,12 +27,11 @@ import { Link } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
-type Platform = "instagram" | "twitter" | "reel";
+type Platform = "instagram" | "twitter";
 
 const platformMeta: Record<Platform, { label: string; icon: typeof Instagram; getContent: (s: SocialContent) => string | null; statusKey: keyof SocialContent; color: string }> = {
   instagram: { label: "Instagram", icon: Instagram, getContent: (s) => s.instagramCaption, statusKey: "instagramStatus", color: "text-pink-500" },
   twitter: { label: "X / Twitter", icon: Twitter, getContent: (s) => s.twitterPost, statusKey: "twitterStatus", color: "text-sky-500" },
-  reel: { label: "Reel Script", icon: Video, getContent: (s) => s.reelScript, statusKey: "reelStatus", color: "text-purple-500" },
 };
 
 const statusStyles: Record<string, string> = {
@@ -114,47 +112,6 @@ function CarouselPreview({ photos }: { photos: string[] }) {
   );
 }
 
-/* ── Reel Script Viewer ── */
-function ReelScriptViewer({ script }: { script: string }) {
-  const sections = script.split(/\n\n/).filter(Boolean);
-
-  return (
-    <div className="space-y-1.5 text-xs" data-testid="reel-script-viewer">
-      {sections.map((section, i) => {
-        const isHook = section.includes("[HOOK");
-        const isCTA = section.includes("[CTA");
-        const isSlide = section.includes("[SLIDE");
-        const lines = section.split("\n");
-        const header = lines[0];
-        const body = lines.slice(1).join("\n");
-
-        return (
-          <div
-            key={i}
-            className={`rounded p-2 ${
-              isHook ? "bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/50 dark:border-amber-800/30" :
-              isCTA ? "bg-sky-50/50 dark:bg-sky-950/20 border border-sky-200/50 dark:border-sky-800/30" :
-              isSlide ? "bg-muted/40 border border-border/40" :
-              "bg-muted/30"
-            }`}
-          >
-            <div className={`font-mono text-[10px] mb-0.5 ${
-              isHook ? "text-amber-600 dark:text-amber-400" :
-              isCTA ? "text-sky-600 dark:text-sky-400" :
-              "text-muted-foreground"
-            }`}>
-              {header}
-            </div>
-            {body && (
-              <div className="text-foreground/80 whitespace-pre-wrap leading-relaxed">{body}</div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 /* ── Platform Content Block ── */
 function PlatformBlock({
   propertyId,
@@ -224,9 +181,6 @@ function PlatformBlock({
     );
   }
 
-  // For reel, show structured viewer
-  const isReel = platform === "reel";
-
   return (
     <div data-testid={`platform-${platform}-${propertyId}`} className="space-y-2">
       {/* Header */}
@@ -290,8 +244,6 @@ function PlatformBlock({
             </Button>
           </div>
         </div>
-      ) : isReel ? (
-        <ReelScriptViewer script={content} />
       ) : (
         <div className="text-xs whitespace-pre-wrap leading-relaxed bg-muted/30 rounded-lg p-3 max-h-44 overflow-y-auto border border-border/30">
           {content}
@@ -317,13 +269,13 @@ function PropertyContentCard({ property }: { property: PropertyWithSocial }) {
   const social = property.socialContent;
   if (!social) return null;
 
-  const platforms: Platform[] = ["instagram", "twitter", "reel"];
+  const platforms: Platform[] = ["instagram", "twitter"];
   const approvedCount = platforms.filter((p) => {
     const s = social[platformMeta[p].statusKey] as string;
     return s === "approved" || s === "posted";
   }).length;
 
-  const allApproved = approvedCount === 3;
+  const allApproved = approvedCount === 2;
   const photos = social.carouselPhotos || [];
 
   const publishMutation = useMutation({
@@ -393,7 +345,7 @@ function PropertyContentCard({ property }: { property: PropertyWithSocial }) {
               );
             })}
           </div>
-          <span className="text-[10px] text-muted-foreground">{approvedCount}/3</span>
+          <span className="text-[10px] text-muted-foreground">{approvedCount}/2</span>
           {expanded ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
         </div>
       </div>
@@ -422,13 +374,19 @@ function PropertyContentCard({ property }: { property: PropertyWithSocial }) {
                   <TabsTrigger value="twitter" className="text-[11px] h-6 px-2.5 gap-1">
                     <Twitter className="h-3 w-3" /> X
                   </TabsTrigger>
-                  <TabsTrigger value="reel" className="text-[11px] h-6 px-2.5 gap-1">
-                    <Video className="h-3 w-3" /> Reel
-                  </TabsTrigger>
                 </TabsList>
                 {platforms.map((platform) => (
                   <TabsContent key={platform} value={platform} className="mt-0">
                     <PlatformBlock propertyId={property.id} platform={platform} social={social} />
+                    {/* Show first comment for Instagram */}
+                    {platform === "instagram" && social.instagramFirstComment && (
+                      <div className="mt-2 space-y-1">
+                        <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">First comment (hashtags)</div>
+                        <div className="text-xs bg-muted/30 rounded-lg p-2 border border-border/30 text-muted-foreground">
+                          {social.instagramFirstComment}
+                        </div>
+                      </div>
+                    )}
                   </TabsContent>
                 ))}
               </Tabs>
@@ -514,31 +472,31 @@ export default function ContentPipeline() {
     : filter === "pending"
       ? items.filter((p) => {
         const s = p.socialContent;
-        return s && (s.instagramStatus === "pending" || s.twitterStatus === "pending" || s.reelStatus === "pending");
+        return s && (s.instagramStatus === "pending" || s.twitterStatus === "pending");
       })
       : filter === "approved"
         ? items.filter((p) => {
           const s = p.socialContent;
-          return s && (s.instagramStatus === "approved" || s.twitterStatus === "approved" || s.reelStatus === "approved");
+          return s && (s.instagramStatus === "approved" || s.twitterStatus === "approved");
         })
         : filter === "ready"
           ? items.filter((p) => {
             const s = p.socialContent;
-            return s && s.instagramStatus === "approved" && s.twitterStatus === "approved" && s.reelStatus === "approved";
+            return s && s.instagramStatus === "approved" && s.twitterStatus === "approved";
           })
           : items;
 
   const pendingCount = items.filter((p) => {
     const s = p.socialContent;
-    return s && (s.instagramStatus === "pending" || s.twitterStatus === "pending" || s.reelStatus === "pending");
+    return s && (s.instagramStatus === "pending" || s.twitterStatus === "pending");
   }).length;
   const approvedCount = items.filter((p) => {
     const s = p.socialContent;
-    return s && (s.instagramStatus === "approved" || s.twitterStatus === "approved" || s.reelStatus === "approved");
+    return s && (s.instagramStatus === "approved" || s.twitterStatus === "approved");
   }).length;
   const readyCount = items.filter((p) => {
     const s = p.socialContent;
-    return s && s.instagramStatus === "approved" && s.twitterStatus === "approved" && s.reelStatus === "approved";
+    return s && s.instagramStatus === "approved" && s.twitterStatus === "approved";
   }).length;
 
   return (
