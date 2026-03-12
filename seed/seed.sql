@@ -191,13 +191,13 @@ INSERT OR IGNORE INTO properties (id, external_id, price, size, rooms, bathrooms
 INSERT OR IGNORE INTO properties (id, external_id, price, size, rooms, bathrooms, title, description, town, province, region, address, latitude, longitude, url, lead_photo, photos, photos_count, raw_type, property_type, composite_score, value_score, sea_score, airport_score, location_score, character_score, social_potential_score, price_per_sqm, nearest_airport, airport_distance_km, distance_to_sea_km, status, batch_date, created_at, updated_at) VALUES (198, '30167349', 455000.0, 510.0, 15, 8, 'Villa in via mu', 'Prestigious Historic Villa with Private Park – Saliceto (CN) In a strategic location between Liguria and Piedmont, we offer for sale an important manor house nestled in the hills of Saliceto (CN), just 18 km from the Millesimo toll booth – A6 Turin/Savona. The property spans approximately 500 square meters distributed over three levels, served by an internal elevator, and is surrounded by a large private park with access from an elegant tree-lined avenue, guaranteeing privacy, prestige, and potential appreciation. Internal distribution: Eat-in kitchen with fireplace Large and bright triple living room with fireplace Dedicated dining room 13 bedrooms 8 bathrooms Triple garage 2 cellars and service rooms Inside the park there are large secondary buildings, ideal for the construction of outbuildings, staff housing, or accommodation facilities (B&Bs, relais, tourist-accommodation activities). Condition and features: Steel window frames Double-glazed windows Good structural condition Restoration and system upgrades are necessary, with a high margin for revaluation Energy class: E Ideal for: Investors Tourist-accommodation projects Representative residence Real estate development operations A unique property in terms of size, context, and potential, difficult to replicate on the market.', 'Saliceto', 'Cuneo', 'piemonte', 'via mu', 44.41373, 8.1694791, 'https://www.idealista.it/immobile/30167349/', 'https://img4.idealista.it/blur/480_360_mq/0/id.pro.it.image.master/7a/2e/63/614749133.webp', '["https://img4.idealista.it/blur/480_360_mq/0/id.pro.it.image.master/7a/2e/63/614749133.webp"]', 20, 'villa', 'villa', 55.0, 69.0, 15.0, 80.0, 54.0, 47.0, 61.0, 892.0, 'Genova (GOA)', 53.0, NULL, 'qualified', '2026-03-12', '2026-03-12 17:35:14', '2026-03-12 17:35:14');
 INSERT OR IGNORE INTO properties (id, external_id, price, size, rooms, bathrooms, title, description, town, province, region, address, latitude, longitude, url, lead_photo, photos, photos_count, raw_type, property_type, composite_score, value_score, sea_score, airport_score, location_score, character_score, social_potential_score, price_per_sqm, nearest_airport, airport_distance_km, distance_to_sea_km, status, batch_date, created_at, updated_at) VALUES (199, '33140212', 485000.0, 450.0, 16, 6, 'Detached house in via Bricco Cisero', 'Located in the hills of the Monferrato, this typical L-shaped Piedmontese farmhouse dating back to the 1700s (approximately 450 sqm) features a large internal courtyard garden, accessed through a charming double entrance for vehicles and pedestrians. The main residential unit consists of: Ground floor, overlooking the internal courtyard-garden: an entrance/hallway, a sitting room, a functional kitchen (furnished and included in the price) with an island, a pantry, a large and bright living room, a hallway/anteroom, a bathroom, and the cellar (a tavern-style room with a furnished kitchen included in the price). Ground floor, overlooking the rear courtyard: a veranda, a woodshed, a bathroom, a boiler room, a technical room for the heating system, and a spacious storage area for machinery and agricultural equipment. First floor: 3 bedrooms with separate access, 3 bathrooms, a characteristic hayloft (open portico) with 3 classic exposed brick arches, 2 terraces and a balcony that enjoy a splendid panoramic view. On the right side of the main house, overlooking the internal courtyard-garden, there is a functional dépendance (an excellent, very new building currently used as a workshop) consisting of 3 rooms, 3 bathrooms and a storage room. Opposite the main house, overlooking the internal courtyard-garden, there is a classic independent rustic outbuilding, with a portico on the ground floor and a hayloft on the first floor. The land, in a single plot along with the buildings, totaling 27,320 sqm (currently used as meadowland). Distances from the property: 1.5 km from the village center of Cortandone (AT), 13 km from the Asti Ovest exit of the Turin–Piacenza motorway, 12 km from the Golf Feudo di Asti courses, 37 km from Alba and 45 km from Turin. In addition to being used as a single-family or two-family home, the property is also suitable for an agriturismo, B&B, farmstay, educational farm and/or equestrian facility. Features: Solar panels for hot water production Plumb', 'Cortandone', 'Asti', 'piemonte', 'via Bricco Cisero', 44.9532122, 8.0569939, 'https://www.idealista.it/immobile/33140212/', 'https://img4.idealista.it/blur/480_360_mq/0/id.pro.it.image.master/3b/9f/dd/714285962.webp', '["https://img4.idealista.it/blur/480_360_mq/0/id.pro.it.image.master/3b/9f/dd/714285962.webp"]', 149, 'independantHouse', 'farmhouse', 55.0, 52.0, 15.0, 80.0, 54.0, 55.0, 69.0, 1078.0, 'Torino (TRN)', 42.0, NULL, 'qualified', '2026-03-12', '2026-03-12 17:35:14', '2026-03-12 17:35:14');
 INSERT OR IGNORE INTO properties (id, external_id, price, size, rooms, bathrooms, title, description, town, province, region, address, latitude, longitude, url, lead_photo, photos, photos_count, raw_type, property_type, composite_score, value_score, sea_score, airport_score, location_score, character_score, social_potential_score, price_per_sqm, nearest_airport, airport_distance_km, distance_to_sea_km, status, batch_date, created_at, updated_at) VALUES (200, '33400813', 250000.0, 220.0, 7, 3, 'Villa in Sp210, 39', 'Exclusive villa with a 4,000 sqm park – ample space and privacy In a private setting surrounded by greenery, we offer for sale a splendid detached villa surrounded by a planted and illuminated park of 4,000 sqm, ideal for those seeking tranquility, nature and generous spaces. The property is spread over four levels, composed as follows: Ground floor: entrance from a large livable terrace, connected to a second terrace with direct views of the park. Internally we find a large living room, dining room, eat-in kitchen and a scenic wooden staircase, which gives warmth and character to the environment. First floor: three bedrooms and a bathroom with window. The two double bedrooms overlook a panoramic balcony, perfect for enjoying the view and the silence of the surrounding greenery. Attic floor: large attic room with a second bathroom, ideal as a study, hobby room or guest suite. Basement floor (accessible only from the outside): large double garage, independent apartment consisting of kitchen, dining room, bedroom, bathroom and technical room. Ideal solution for hosting family members or for creating an autonomous area for collaborators. A property to see, where elegance meets functionality.', 'Ponzone', 'Alessandria', 'piemonte', 'SP210, 39', 44.5408222, 8.536827, 'https://www.idealista.it/immobile/33400813/', 'https://img4.idealista.it/blur/480_360_mq/0/id.pro.it.image.master/ca/03/13/716409856.webp', '["https://img4.idealista.it/blur/480_360_mq/0/id.pro.it.image.master/ca/03/13/716409856.webp"]', 51, 'villa', 'villa', 55.0, 47.0, 15.0, 100.0, 54.0, 51.0, 70.0, 1136.0, 'Genova (GOA)', 28.0, NULL, 'qualified', '2026-03-12', '2026-03-12 17:35:14', '2026-03-12 17:35:14');
-INSERT OR IGNORE INTO social_contents (id, property_id, instagram_caption, twitter_post, reel_script, summary, carousel_photos, instagram_status, twitter_status, reel_status, generated_at, instagram_first_comment) VALUES (18, 104, '€209,000 for a trullo in Ostuni.
-Plus olive grove. Needs work — which is why the price is what it is.
-100m², 5 rooms, €2,090/m².
-Ostuni needs no introduction. The price, on the other hand, needs explaining.
-DM for the full listing.', '€209,000. 100m². Trullo in Ostuni.
-Plus an olive grove. The productive kind.
-A studio apartment in most European capitals costs this.
+INSERT OR IGNORE INTO social_contents (id, property_id, instagram_caption, twitter_post, reel_script, summary, carousel_photos, instagram_status, twitter_status, reel_status, generated_at, instagram_first_comment) VALUES (18, 104, 'For the price of a studio in London: 100m² in Ostuni.
+Olive grove. Needs work — that''s why the price is what it is.
+100m² · 5 rooms · €2,090/m²
+Puglia. The heel of the boot, the heart of the value.
+DM for the full listing.', 'UK deposit money → 100m² trullo in Ostuni.
+Plus an olive grove.
+The Balearics want 3x for half the charm.
 DM for the full listing.', '[HOOK — 0-3s]
 AVATAR: "€209,000 for a trullo in Ostuni. That''s what we found. Let me walk you through it."
 
@@ -221,14 +221,14 @@ AVATAR: "We track listings like this across seven Italian regions. The ones that
 
 [CTA — 26-30s]
 AVATAR: "Follow @theitalian.exit for more. Link in bio for the full listing."
-TEXT OVERLAY: "theitalian.exit | Link in bio"', '€209,000 trullo in Ostuni, Puglia — 100m², 5 rooms, €2,090/m²', '["https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/69/0c/ae/539778698.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/01/24/76/664231314.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/45/93/29/539778739.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/01/24/76/664231328.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/45/93/29/539778738.webp"]', 'pending', 'pending', 'pending', '2026-03-12 22:37:55', '#TheItalianExit #TrulliPuglia #PugliaProperty #HiddenItaly #AffordableItaly');
-INSERT OR IGNORE INTO social_contents (id, property_id, instagram_caption, twitter_post, reel_script, summary, carousel_photos, instagram_status, twitter_status, reel_status, generated_at, instagram_first_comment) VALUES (19, 13, '€150,000. In Serravalle Langhe.
-Pool included. Already restored. Move-in condition.
-320m², 8 rooms, €469/m².
-The Langhe. Barolo, truffles, and nobody outside Italy is watching the property market here.
-DM for the full listing.', '€150,000. 320m². Casale in Serravalle Langhe.
-Pool, garden, and the kind of views you''d expect to pay 3x for.
-A studio in London. Or this.
+TEXT OVERLAY: "theitalian.exit | Link in bio"', '€209,000 trullo in Ostuni, Puglia — 100m², 5 rooms, €2,090/m²', '["https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/69/0c/ae/539778698.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/01/24/76/664231314.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/45/93/29/539778739.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/01/24/76/664231328.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/45/93/29/539778738.webp"]', 'pending', 'pending', 'pending', '2026-03-12 22:49:17', '#TheItalianExit #TrulliPuglia #PugliaProperty #HiddenItaly #AffordableItaly');
+INSERT OR IGNORE INTO social_contents (id, property_id, instagram_caption, twitter_post, reel_script, summary, carousel_photos, instagram_status, twitter_status, reel_status, generated_at, instagram_first_comment) VALUES (19, 13, 'This just appeared on the market in Serravalle Langhe.
+Pool included. Already restored. Move-in ready.
+320m² · 8 rooms · €469/m²
+The Langhe. Barolo, truffles, and property prices that haven''t caught up.
+DM for the full listing.', 'Why are people still buying studios in London when this exists?
+Pool. Garden. 8 rooms.
+That''s less than most down payments in any major city.
 DM for the full listing.', '[HOOK — 0-3s]
 AVATAR: "€150,000. 320m². €469/m². Serravalle Langhe, Cuneo. Let me walk you through it."
 
@@ -252,14 +252,14 @@ AVATAR: "We track listings like this across seven Italian regions. The ones that
 
 [CTA — 26-30s]
 AVATAR: "Follow @theitalian.exit for more. Link in bio for the full listing."
-TEXT OVERLAY: "theitalian.exit | Link in bio"', '€150,000 casale in Serravalle Langhe, Piemonte — 320m², 8 rooms, €469/m²', '["https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/48/c0/15/707713868.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/f6/8d/c2/707713869.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/a8/66/c6/707713872.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/19/3f/82/707713876.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/94/a3/b9/707713880.webp"]', 'pending', 'pending', 'pending', '2026-03-12 22:37:55', '#TheItalianExit #ItalianFarmhouse #PiemonteHomes #HiddenItaly #AffordableItaly');
-INSERT OR IGNORE INTO social_contents (id, property_id, instagram_caption, twitter_post, reel_script, summary, carousel_photos, instagram_status, twitter_status, reel_status, generated_at, instagram_first_comment) VALUES (20, 9, '€300,000 for a masseria in Noci.
-Pool included. Plus olive grove. Already restored. Move-in condition.
-500m², 8 rooms, €600/m².
-Noci needs no introduction. The price, on the other hand, needs explaining.
-DM for the full listing.', '€300,000. 500m². Masseria in Noci.
-Pool, garden, and the kind of views you''d expect to pay 3x for.
-A studio apartment in most European capitals costs this.
+TEXT OVERLAY: "theitalian.exit | Link in bio"', '€150,000 casale in Serravalle Langhe, Piemonte — 320m², 8 rooms, €469/m²', '["https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/48/c0/15/707713868.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/f6/8d/c2/707713869.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/a8/66/c6/707713872.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/19/3f/82/707713876.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/94/a3/b9/707713880.webp"]', 'pending', 'pending', 'pending', '2026-03-12 22:49:17', '#TheItalianExit #ItalianFarmhouse #PiemonteHomes #HiddenItaly #AffordableItaly');
+INSERT OR IGNORE INTO social_contents (id, property_id, instagram_caption, twitter_post, reel_script, summary, carousel_photos, instagram_status, twitter_status, reel_status, generated_at, instagram_first_comment) VALUES (20, 9, 'Morning coffee with this view. €300,000.
+Pool included. Olive grove. Already restored. Move-in ready.
+500m² · 8 rooms · €600/m²
+Puglia. The heel of the boot, the heart of the value.
+DM for the full listing.', 'Noci is what Tuscany was 20 years ago. But cheaper.
+Pool. Garden. 8 rooms.
+The Balearics want 3x for half the charm.
 DM for the full listing.', '[HOOK — 0-3s]
 AVATAR: "€300,000. 500m². €600/m². Noci, Bari. Let me walk you through it."
 
@@ -283,14 +283,14 @@ AVATAR: "We track listings like this across seven Italian regions. The ones that
 
 [CTA — 26-30s]
 AVATAR: "Follow @theitalian.exit for more. Link in bio for the full listing."
-TEXT OVERLAY: "theitalian.exit | Link in bio"', '€300,000 masseria in Noci, Puglia — 500m², 8 rooms, €600/m²', '["https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/09/e0/de/711211194.jpg", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/e6/6e/d6/707166966.jpg", "https://img3.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/97/3d/8c/711211181.jpg", "https://img3.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/97/3d/8c/711211185.jpg", "https://img3.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/97/3d/8c/711211188.jpg"]', 'pending', 'pending', 'pending', '2026-03-12 22:37:55', '#TheItalianExit #MasseriaLife #PugliaProperty #HiddenItaly');
-INSERT OR IGNORE INTO social_contents (id, property_id, instagram_caption, twitter_post, reel_script, summary, carousel_photos, instagram_status, twitter_status, reel_status, generated_at, instagram_first_comment) VALUES (21, 59, '€230,000 for a palazzo in Ostuni.
-Panoramic terraces overlooking Ostuni. Star-vaulted ceilings. The kind you can''t fake. Needs work — which is why the price is what it is.
-148m², 6 rooms, €1,554/m².
-Ostuni needs no introduction. The price, on the other hand, needs explaining.
-DM for the full listing.', '€230,000. 148m². Palazzo in Ostuni.
-Vaulted ceilings, panoramic terraces, centro storico.
-A studio apartment in most European capitals costs this.
+TEXT OVERLAY: "theitalian.exit | Link in bio"', '€300,000 masseria in Noci, Puglia — 500m², 8 rooms, €600/m²', '["https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/09/e0/de/711211194.jpg", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/e6/6e/d6/707166966.jpg", "https://img3.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/97/3d/8c/711211181.jpg", "https://img3.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/97/3d/8c/711211185.jpg", "https://img3.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/97/3d/8c/711211188.jpg"]', 'pending', 'pending', 'pending', '2026-03-12 22:49:17', '#TheItalianExit #MasseriaLife #PugliaProperty #HiddenItaly');
+INSERT OR IGNORE INTO social_contents (id, property_id, instagram_caption, twitter_post, reel_script, summary, carousel_photos, instagram_status, twitter_status, reel_status, generated_at, instagram_first_comment) VALUES (21, 59, 'For the price of a studio in London: 148m² in Ostuni.
+Panoramic terraces over Ostuni. Star-vaulted ceilings. Needs work — that''s why the price is what it is.
+148m² · 6 rooms · €1,554/m²
+Puglia. The heel of the boot, the heart of the value.
+DM for the full listing.', '€230,000 for this. What am I missing?
+Vaulted ceilings + panoramic terraces.
+Same as 2 years of rent in most capitals.
 DM for the full listing.', '[HOOK — 0-3s]
 AVATAR: "€230,000 for a palazzo in Ostuni. That''s what we found. Let me walk you through it."
 
@@ -314,14 +314,14 @@ AVATAR: "We track listings like this across seven Italian regions. The ones that
 
 [CTA — 26-30s]
 AVATAR: "Follow @theitalian.exit for more. Link in bio for the full listing."
-TEXT OVERLAY: "theitalian.exit | Link in bio"', '€230,000 palazzo in Ostuni, Puglia — 148m², 6 rooms, €1,554/m²', '["https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/d1/a5/b4/753175748.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/af/bf/5a/753175793.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/9f/a0/e8/753175749.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/ff/a6/07/753175750.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/b5/a5/01/753175738.webp"]', 'pending', 'pending', 'pending', '2026-03-12 22:37:55', '#TheItalianExit #ItalianPalazzo #PugliaProperty #HiddenItaly #AffordableItaly');
-INSERT OR IGNORE INTO social_contents (id, property_id, instagram_caption, twitter_post, reel_script, summary, carousel_photos, instagram_status, twitter_status, reel_status, generated_at, instagram_first_comment) VALUES (22, 116, '€319,000 for a palazzo in Ostuni.
-Panoramic terraces overlooking Ostuni. Yes, there''s a rooftop jacuzzi.
-100m², 5 rooms, €3,190/m².
-Ostuni needs no introduction. The price, on the other hand, needs explaining.
-DM for the full listing.', '€319,000. 100m². Palazzo in Ostuni.
-Rooftop jacuzzi overlooking the White City.
-A studio apartment in most European capitals costs this.
+TEXT OVERLAY: "theitalian.exit | Link in bio"', '€230,000 palazzo in Ostuni, Puglia — 148m², 6 rooms, €1,554/m²', '["https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/d1/a5/b4/753175748.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/af/bf/5a/753175793.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/9f/a0/e8/753175749.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/ff/a6/07/753175750.webp", "https://img4.idealista.it/blur/WEB_DETAIL-XL-L/0/id.pro.it.image.master/b5/a5/01/753175738.webp"]', 'pending', 'pending', 'pending', '2026-03-12 22:49:17', '#TheItalianExit #ItalianPalazzo #PugliaProperty #HiddenItaly #AffordableItaly');
+INSERT OR IGNORE INTO social_contents (id, property_id, instagram_caption, twitter_post, reel_script, summary, carousel_photos, instagram_status, twitter_status, reel_status, generated_at, instagram_first_comment) VALUES (22, 116, 'Would you buy a palazzo in Ostuni for €319,000?
+Panoramic terraces over Ostuni. Rooftop jacuzzi.
+100m² · 5 rooms · €3,190/m²
+Ostuni. The kind of place where dinner takes 3 hours and nobody apologises.
+DM for the full listing.', '€319,000 won''t buy a garage in Amsterdam. But it buys this in Ostuni.
+Rooftop jacuzzi included.
+Less than a campervan. But it doesn''t move, and that''s the point.
 DM for the full listing.', '[HOOK — 0-3s]
 AVATAR: "€319,000 for a palazzo in Ostuni. That''s what we found. Let me walk you through it."
 
@@ -345,5 +345,5 @@ AVATAR: "We track listings like this across seven Italian regions. The ones that
 
 [CTA — 26-30s]
 AVATAR: "Follow @theitalian.exit for more. Link in bio for the full listing."
-TEXT OVERLAY: "theitalian.exit | Link in bio"', '€319,000 palazzo in Ostuni, Puglia — 100m², 5 rooms, €3,190/m²', '["https://www.immobiliareostuni.com/public/casamia/2794/images/000001.jpg", "https://www.immobiliareostuni.com/public/casamia/2794/images/000002.jpg", "https://www.immobiliareostuni.com/public/casamia/2794/images/000003.jpg", "https://www.immobiliareostuni.com/public/casamia/2794/images/000004.jpg", "https://www.immobiliareostuni.com/public/casamia/2794/images/000005.jpg"]', 'pending', 'pending', 'pending', '2026-03-12 22:37:55', '#TheItalianExit #ItalianPalazzo #PugliaProperty #HiddenItaly');
+TEXT OVERLAY: "theitalian.exit | Link in bio"', '€319,000 palazzo in Ostuni, Puglia — 100m², 5 rooms, €3,190/m²', '["https://www.immobiliareostuni.com/public/casamia/2794/images/000001.jpg", "https://www.immobiliareostuni.com/public/casamia/2794/images/000002.jpg", "https://www.immobiliareostuni.com/public/casamia/2794/images/000003.jpg", "https://www.immobiliareostuni.com/public/casamia/2794/images/000004.jpg", "https://www.immobiliareostuni.com/public/casamia/2794/images/000005.jpg"]', 'pending', 'pending', 'pending', '2026-03-12 22:49:17', '#TheItalianExit #ItalianPalazzo #PugliaProperty #HiddenItaly');
 INSERT OR IGNORE INTO batches (id, date, raw_count, qualified_count, selected_count, rejected_count, errors, status, created_at) VALUES (1, '2026-03-12', 221, 200, 0, 0, NULL, 'completed', '2026-03-12 12:26:00');
