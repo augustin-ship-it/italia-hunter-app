@@ -771,30 +771,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const text = platform === "instagram" ? social.instagramCaption : social.twitterPost;
       if (!text) return res.status(400).json({ message: `No ${platform} content found` });
 
-      // Build assets - validate image URLs
+      // Build assets from carousel photos
       const photos: string[] = social.carouselPhotos || [];
-      let assets: any = undefined;
       const maxPhotos = platform === "twitter" ? 4 : photos.length;
-      if (photos.length > 0) {
-        const validPhotos: string[] = [];
-        for (const url of photos.slice(0, maxPhotos)) {
-          try {
-            const check = await fetch(url, { method: "HEAD" });
-            if (check.ok && Number(check.headers.get("content-length") || "0") > 0) {
-              validPhotos.push(url);
-            }
-          } catch { /* skip */ }
-        }
-        if (validPhotos.length > 0) {
-          assets = { images: validPhotos.map((u: string) => ({ url: u })) };
-        }
-      }
-
-      // IG metadata
-      let metadata: any = undefined;
-      if (platform === "instagram") {
-        metadata = { instagram: { type: assets?.images?.length > 1 ? "carousel" : "post", shouldShareToFeed: true } };
-      }
+      const photoUrls = photos.slice(0, maxPhotos);
 
       const mutation = `mutation CreatePost($input: CreatePostInput!) {
         createPost(input: $input) {
@@ -808,23 +788,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }`;
 
-      const input: any = { channelId, text, schedulingType: "automatic", mode: "shareNow" };
-      if (assets) input.assets = assets;
-      if (metadata) input.metadata = metadata;
+      // Helper to attempt Buffer post
+      async function attemptBufferPost(withPhotos: string[]) {
+        const input: any = { channelId, text, schedulingType: "automatic", mode: "shareNow" };
+        if (withPhotos.length > 0) {
+          input.assets = { images: withPhotos.map((u: string) => ({ url: u })) };
+        }
+        if (platform === "instagram") {
+          input.metadata = { instagram: { type: withPhotos.length > 1 ? "carousel" : "post", shouldShareToFeed: true } };
+        }
+        const r = await fetch("https://api.buffer.com/graphql", {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${BUFFER_TOKEN}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ query: mutation, variables: { input } }),
+        });
+        return r.json();
+      }
 
-      const bufferRes = await fetch("https://api.buffer.com/graphql", {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${BUFFER_TOKEN}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ query: mutation, variables: { input } }),
-      });
-      const bufferData = await bufferRes.json();
+      // Try with photos first, fall back to fewer photos or text-only
+      let bufferData = await attemptBufferPost(photoUrls);
+      if (bufferData.data?.createPost?.message && photoUrls.length > 0) {
+        // Photos failed — retry with just first photo
+        if (photoUrls.length > 1) {
+          bufferData = await attemptBufferPost([photoUrls[0]]);
+        }
+        // If still failing, try text-only (for X) or fail for IG (which requires images)
+        if (bufferData.data?.createPost?.message && platform === "twitter") {
+          bufferData = await attemptBufferPost([]);
+        }
+      }
 
       if (bufferData.errors) {
         return res.status(502).json({ message: "Buffer API error", errors: bufferData.errors });
       }
       const result = bufferData.data?.createPost;
       if (result?.post) {
-        // Mark as posted
         const field = platform === "instagram" ? "instagram_status" : "twitter_status";
         database.run(`UPDATE social_contents SET ${field} = 'posted' WHERE property_id = ?`, [propertyId]);
         persistDb();

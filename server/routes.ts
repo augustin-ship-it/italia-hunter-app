@@ -328,52 +328,11 @@ export async function registerRoutes(
         return res.status(400).json({ message: `No ${platform} content found` });
       }
 
-      // Build assets — validate images are accessible
+      // Build assets from carousel photos
       const photos = social.carouselPhotos || [];
-      let assets: any = undefined;
-      if (photos.length > 0 && platform === "instagram") {
-        // Validate images are still accessible (Idealista URLs can expire)
-        const validPhotos: string[] = [];
-        for (const url of photos) {
-          try {
-            const check = await fetch(url, { method: "HEAD" });
-            if (check.ok && check.headers.get("content-length") !== "0") {
-              validPhotos.push(url);
-            }
-          } catch { /* skip broken URLs */ }
-        }
-        if (validPhotos.length > 0) {
-          assets = { images: validPhotos.map(url => ({ url })) };
-        }
-      } else if (photos.length > 0 && platform === "twitter") {
-        // X supports up to 4 images
-        const validPhotos: string[] = [];
-        for (const url of photos.slice(0, 4)) {
-          try {
-            const check = await fetch(url, { method: "HEAD" });
-            if (check.ok && check.headers.get("content-length") !== "0") {
-              validPhotos.push(url);
-            }
-          } catch { /* skip broken URLs */ }
-        }
-        if (validPhotos.length > 0) {
-          assets = { images: validPhotos.map(url => ({ url })) };
-        }
-      }
+      const maxPhotos = platform === "twitter" ? 4 : photos.length;
+      const photoUrls = photos.slice(0, maxPhotos);
 
-      // Build metadata for IG carousels
-      let metadata: any = undefined;
-      if (platform === "instagram") {
-        const igType = assets && assets.images && assets.images.length > 1 ? "carousel" : "post";
-        metadata = {
-          instagram: {
-            type: igType,
-            shouldShareToFeed: true,
-          },
-        };
-      }
-
-      // Create post via Buffer GraphQL API
       const mutation = `mutation CreatePost($input: CreatePostInput!) {
         createPost(input: $input) {
           ... on PostActionSuccess { post { id status text } }
@@ -386,44 +345,43 @@ export async function registerRoutes(
         }
       }`;
 
-      const input: any = {
-        channelId,
-        text,
-        schedulingType: "automatic",
-        mode: "shareNow",
-      };
-      if (assets) input.assets = assets;
-      if (metadata) input.metadata = metadata;
+      // Helper to attempt Buffer post
+      async function attemptBufferPost(withPhotos: string[]) {
+        const input: any = { channelId, text, schedulingType: "automatic", mode: "shareNow" };
+        if (withPhotos.length > 0) {
+          input.assets = { images: withPhotos.map(u => ({ url: u })) };
+        }
+        if (platform === "instagram") {
+          input.metadata = { instagram: { type: withPhotos.length > 1 ? "carousel" : "post", shouldShareToFeed: true } };
+        }
+        const r = await fetch("https://api.buffer.com/graphql", {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${BUFFER_TOKEN}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ query: mutation, variables: { input } }),
+        });
+        return r.json();
+      }
 
-      const bufferRes = await fetch("https://api.buffer.com/graphql", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${BUFFER_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ query: mutation, variables: { input } }),
-      });
+      // Try with photos first, fall back to fewer photos or text-only
+      let bufferData: any = await attemptBufferPost(photoUrls);
+      if (bufferData.data?.createPost?.message && photoUrls.length > 0) {
+        if (photoUrls.length > 1) {
+          bufferData = await attemptBufferPost([photoUrls[0]]);
+        }
+        if (bufferData.data?.createPost?.message && platform === "twitter") {
+          bufferData = await attemptBufferPost([]);
+        }
+      }
 
-      const bufferData = await bufferRes.json();
-
-      // Check for errors
       if (bufferData.errors) {
         return res.status(502).json({ message: "Buffer API error", errors: bufferData.errors });
       }
       const result = bufferData.data?.createPost;
       if (result?.post) {
-        // Success — mark as posted
         await storage.updateContentStatus(propertyId, platform, "posted");
-        return res.json({
-          success: true,
-          bufferPostId: result.post.id,
-          status: result.post.status,
-          platform,
-        });
+        return res.json({ success: true, bufferPostId: result.post.id, status: result.post.status, platform });
       } else {
-        // Buffer returned an error union type
-        const errMsg = result?.message || "Unknown Buffer error";
-        return res.status(502).json({ message: errMsg });
+        return res.status(502).json({ message: result?.message || "Unknown Buffer error" });
       }
     } catch (error: any) {
       res.status(500).json({ message: error.message });
