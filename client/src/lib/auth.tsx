@@ -53,6 +53,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const { token: newToken } = await res.json();
         setToken(newToken);
         localStorage.setItem(TOKEN_KEY, newToken);
+        // Reset hash to root so the router doesn't land on a stale path
+        window.location.hash = "#/";
         return { success: true };
       }
       const data = await res.json().catch(() => ({}));
