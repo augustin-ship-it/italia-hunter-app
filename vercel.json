@@ -8,7 +8,7 @@
     "api/**/*.ts": {
       "memory": 1024,
       "maxDuration": 30,
-      "includeFiles": "seed/**"
+      "includeFiles": "seed/**,node_modules/sql.js/dist/sql-wasm.wasm"
     }
   },
   "rewrites": [

@@ -3,10 +3,16 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 
-// Use asm.js build (pure JS, no WASM file needed - works in serverless)
-// @ts-ignore - no types for asm build
-const initSqlJs = require("sql.js/dist/sql-asm.js");
 type Database = any;
+let _initSqlJs: any = null;
+
+async function loadSqlJs() {
+  if (_initSqlJs) return _initSqlJs;
+  // Dynamic import of sql.js (works in both ESM and CJS)
+  const sqljs = await import("sql.js");
+  _initSqlJs = sqljs.default || sqljs;
+  return _initSqlJs;
+}
 
 // ────────────────────────────────────────────
 // Authentication
@@ -46,7 +52,17 @@ let db: Database | null = null;
 async function getDb(): Promise<Database> {
   if (db) return db;
 
-  const SQL = await initSqlJs();
+  const initSqlJs = await loadSqlJs();
+  // Locate the WASM file for sql.js
+  const wasmPath = path.join(process.cwd(), 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
+  let SQL;
+  if (fs.existsSync(wasmPath)) {
+    const wasmBinary = fs.readFileSync(wasmPath);
+    SQL = await initSqlJs({ wasmBinary });
+  } else {
+    // Fallback: try without WASM (will use asm.js if available)
+    SQL = await initSqlJs();
+  }
 
   // Try loading from /tmp first (persists across warm invocations)
   const tmpPath = "/tmp/italia-hunter.db";
