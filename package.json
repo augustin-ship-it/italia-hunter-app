@@ -109,8 +109,8 @@
     }
   },
   "optionalDependencies": {
-    "bufferutil": "^4.0.8",
+    "@types/better-sqlite3": "^7.6.13",
     "better-sqlite3": "^12.6.2",
-    "@types/better-sqlite3": "^7.6.13"
+    "bufferutil": "^4.0.8"
   }
 }

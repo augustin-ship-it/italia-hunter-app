@@ -1,7 +1,8 @@
 import { Link, useLocation } from "wouter";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { Menu, X } from "lucide-react";
+import { Menu, X, LogOut } from "lucide-react";
+import { useAuth } from "@/lib/auth";
 
 const navItems = [
   { href: "/", label: "Dashboard" },
@@ -14,6 +15,7 @@ const navItems = [
 export default function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { logout } = useAuth();
 
   return (
     <div className="min-h-screen bg-background">
@@ -48,14 +50,24 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               })}
             </nav>
 
-            {/* Mobile menu button */}
-            <button
-              className="md:hidden p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent"
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              data-testid="mobile-menu-toggle"
-            >
-              {mobileMenuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
-            </button>
+            {/* Right side: logout + mobile menu */}
+            <div className="flex items-center gap-1">
+              <button
+                className="hidden md:flex items-center gap-1.5 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                onClick={logout}
+                data-testid="button-logout"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                Sign out
+              </button>
+              <button
+                className="md:hidden p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent"
+                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                data-testid="mobile-menu-toggle"
+              >
+                {mobileMenuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -81,6 +93,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 </Link>
               );
             })}
+            <button
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors mt-1 border-t pt-2"
+              onClick={() => { logout(); setMobileMenuOpen(false); }}
+              data-testid="button-logout-mobile"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Sign out
+            </button>
           </nav>
         )}
       </header>

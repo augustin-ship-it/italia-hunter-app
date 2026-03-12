@@ -1,13 +1,77 @@
-import type { Express } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { type Server } from "http";
 import { storage } from "./storage";
 import { importPropertySchema, propertyStatusEnum, contentApprovalEnum } from "@shared/schema";
 import { z } from "zod";
+import crypto from "crypto";
+
+const APP_PASSWORD = process.env.APP_PASSWORD || "ItaliaHunter2026!";
+const TOKEN_SECRET = process.env.TOKEN_SECRET || "italia-hunter-secret-key-2026";
+
+function createToken(): string {
+  const payload = {
+    iat: Date.now(),
+    exp: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
+  };
+  const data = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const sig = crypto.createHmac("sha256", TOKEN_SECRET).update(data).digest("base64url");
+  return `${data}.${sig}`;
+}
+
+function verifyToken(token: string): boolean {
+  try {
+    const [data, sig] = token.split(".");
+    if (!data || !sig) return false;
+    const expectedSig = crypto.createHmac("sha256", TOKEN_SECRET).update(data).digest("base64url");
+    if (sig !== expectedSig) return false;
+    const payload = JSON.parse(Buffer.from(data, "base64url").toString());
+    if (payload.exp < Date.now()) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const PIPELINE_API_KEY = process.env.PIPELINE_API_KEY || "italia-pipeline-key-2026";
+
+function authMiddleware(req: Request, res: Response, next: NextFunction) {
+  // Allow pipeline API key for automated imports
+  const apiKey = req.headers["x-api-key"] as string || "";
+  if (apiKey === PIPELINE_API_KEY) return next();
+
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader.replace("Bearer ", "");
+  if (!verifyToken(token)) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+  next();
+}
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express,
 ): Promise<Server> {
+  // Auth routes (public)
+  app.post("/api/auth/login", async (req, res) => {
+    const { password } = req.body || {};
+    if (password === APP_PASSWORD) {
+      return res.json({ token: createToken() });
+    }
+    return res.status(401).json({ message: "Invalid password" });
+  });
+
+  app.get("/api/auth/verify", async (req, res) => {
+    const authHeader = req.headers.authorization || "";
+    const token = authHeader.replace("Bearer ", "");
+    if (verifyToken(token)) {
+      return res.status(200).json({ valid: true });
+    }
+    return res.status(401).json({ valid: false });
+  });
+
+  // All routes below require auth
+  app.use("/api", authMiddleware);
+
   // GET /api/properties — list with filters
   app.get("/api/properties", async (req, res) => {
     try {

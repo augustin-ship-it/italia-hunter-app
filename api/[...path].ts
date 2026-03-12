@@ -1,7 +1,42 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import initSqlJs, { type Database } from "sql.js";
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
+
+// Use asm.js build (pure JS, no WASM file needed - works in serverless)
+// @ts-ignore - no types for asm build
+const initSqlJs = require("sql.js/dist/sql-asm.js");
+type Database = any;
+
+// ────────────────────────────────────────────
+// Authentication
+// ────────────────────────────────────────────
+const APP_PASSWORD = process.env.APP_PASSWORD || "ItaliaHunter2026!";
+const TOKEN_SECRET = process.env.TOKEN_SECRET || "italia-hunter-secret-key-2026";
+
+function createToken(): string {
+  const payload = {
+    iat: Date.now(),
+    exp: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
+  };
+  const data = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const sig = crypto.createHmac("sha256", TOKEN_SECRET).update(data).digest("base64url");
+  return `${data}.${sig}`;
+}
+
+function verifyToken(token: string): boolean {
+  try {
+    const [data, sig] = token.split(".");
+    if (!data || !sig) return false;
+    const expectedSig = crypto.createHmac("sha256", TOKEN_SECRET).update(data).digest("base64url");
+    if (sig !== expectedSig) return false;
+    const payload = JSON.parse(Buffer.from(data, "base64url").toString());
+    if (payload.exp < Date.now()) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // ────────────────────────────────────────────
 // Singleton SQLite DB (survives warm invocations)
@@ -452,16 +487,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.status(200).end();
 
   try {
-    const database = await getDb();
     const url = req.url || "";
-    // Extract path after /api
     const apiPath = url.replace(/^\/api/, "").split("?")[0];
     const method = req.method || "GET";
     const query = req.query || {};
+
+    // ── POST /api/auth/login — public, no token needed
+    if (apiPath === "/auth/login" && method === "POST") {
+      const { password } = req.body || {};
+      if (password === APP_PASSWORD) {
+        const token = createToken();
+        return res.status(200).json({ token });
+      }
+      return res.status(401).json({ message: "Invalid password" });
+    }
+
+    // ── GET /api/auth/verify — check if token is valid
+    if (apiPath === "/auth/verify" && method === "GET") {
+      const authHeader = req.headers.authorization || "";
+      const token = authHeader.replace("Bearer ", "");
+      if (verifyToken(token)) {
+        return res.status(200).json({ valid: true });
+      }
+      return res.status(401).json({ valid: false });
+    }
+
+    // ── Auth middleware: all other routes require valid token or API key
+    const authHeader = req.headers.authorization || "";
+    const apiKey = (req.headers["x-api-key"] as string) || "";
+    const token = authHeader.replace("Bearer ", "");
+    const PIPELINE_API_KEY = process.env.PIPELINE_API_KEY || "italia-pipeline-key-2026";
+    const isApiKeyAuth = apiKey === PIPELINE_API_KEY;
+    if (!isApiKeyAuth && !verifyToken(token)) {
+      return res.status(401).json({ message: "Unauthorized — please log in" });
+    }
+
+    const database = await getDb();
 
     // ── GET /api/properties
     if (apiPath === "/properties" && method === "GET") {
