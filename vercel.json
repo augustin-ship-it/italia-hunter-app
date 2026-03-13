@@ -11,8 +11,17 @@
       "includeFiles": "seed/**,node_modules/sql.js/dist/sql-wasm.wasm"
     }
   },
+  "headers": [
+    {
+      "source": "/reels/(.+).mp4",
+      "headers": [
+        { "key": "Content-Type", "value": "video/mp4" },
+        { "key": "Access-Control-Allow-Origin", "value": "*" }
+      ]
+    }
+  ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/[...path]" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/((?!api/|reels/).*)", "destination": "/index.html" }
   ]
 }
