@@ -1,17 +1,48 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import fs from "fs";
-import path from "path";
 import crypto from "crypto";
 
-type Database = any;
-let _initSqlJs: any = null;
+// ────────────────────────────────────────────
+// Supabase REST API config
+// ────────────────────────────────────────────
+const SUPABASE_URL = process.env.SUPABASE_URL || "https://ddvdkavznseinkgmfeiy.supabase.co";
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdmRrYXZ6bnNlaW5rZ21mZWl5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzMzgyMDUsImV4cCI6MjA4ODkxNDIwNX0.jw1AugJ55FQIUOvw59q4MufEIm6qIs6d83s7fN4YNvs";
 
-async function loadSqlJs() {
-  if (_initSqlJs) return _initSqlJs;
-  // Dynamic import of sql.js (works in both ESM and CJS)
-  const sqljs = await import("sql.js");
-  _initSqlJs = sqljs.default || sqljs;
-  return _initSqlJs;
+const supabaseHeaders = {
+  apikey: SUPABASE_ANON_KEY,
+  Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+  "Content-Type": "application/json",
+};
+
+async function supabase(
+  table: string,
+  opts: {
+    method?: string;
+    query?: string;
+    body?: any;
+    prefer?: string;
+    single?: boolean;
+  } = {}
+): Promise<any> {
+  const method = opts.method || "GET";
+  const qs = opts.query || "";
+  const url = `${SUPABASE_URL}/rest/v1/${table}${qs ? `?${qs}` : ""}`;
+  const headers: Record<string, string> = { ...supabaseHeaders };
+  if (opts.prefer) headers["Prefer"] = opts.prefer;
+  // For single-row returns
+  if (opts.single) headers["Accept"] = "application/vnd.pgrst.object+json";
+
+  const fetchOpts: RequestInit = { method, headers };
+  if (opts.body !== undefined) fetchOpts.body = JSON.stringify(opts.body);
+
+  const resp = await fetch(url, fetchOpts);
+  if (resp.status === 204) return null;
+  if (resp.status === 406 && opts.single) return null; // no rows found
+  const data = await resp.json();
+  if (resp.status >= 400) {
+    const msg = typeof data === "object" && data.message ? data.message : JSON.stringify(data);
+    throw new Error(`Supabase ${resp.status}: ${msg}`);
+  }
+  return data;
 }
 
 // ────────────────────────────────────────────
@@ -45,158 +76,8 @@ function verifyToken(token: string): boolean {
 }
 
 // ────────────────────────────────────────────
-// Singleton SQLite DB (survives warm invocations)
+// Row conversion helpers (snake_case → camelCase)
 // ────────────────────────────────────────────
-let db: Database | null = null;
-
-async function getDb(): Promise<Database> {
-  if (db) return db;
-
-  const initSqlJs = await loadSqlJs();
-  // Locate the WASM file for sql.js
-  const wasmPath = path.join(process.cwd(), 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
-  let SQL;
-  if (fs.existsSync(wasmPath)) {
-    const wasmBinary = fs.readFileSync(wasmPath);
-    SQL = await initSqlJs({ wasmBinary });
-  } else {
-    // Fallback: try without WASM (will use asm.js if available)
-    SQL = await initSqlJs();
-  }
-
-  // Try loading from /tmp first (persists across warm invocations)
-  const tmpPath = "/tmp/italia-hunter.db";
-  if (fs.existsSync(tmpPath)) {
-    const buffer = fs.readFileSync(tmpPath);
-    db = new SQL.Database(buffer);
-    return db;
-  }
-
-  // Create fresh DB and seed it
-  db = new SQL.Database();
-  db.run("PRAGMA foreign_keys = ON");
-
-  // Create tables
-  db.run(`
-    CREATE TABLE IF NOT EXISTS properties (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      external_id TEXT NOT NULL UNIQUE,
-      price REAL NOT NULL,
-      size REAL,
-      rooms INTEGER,
-      bathrooms INTEGER,
-      title TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      town TEXT NOT NULL,
-      province TEXT NOT NULL,
-      region TEXT NOT NULL,
-      address TEXT,
-      latitude REAL,
-      longitude REAL,
-      url TEXT NOT NULL,
-      lead_photo TEXT,
-      photos TEXT,
-      photos_count INTEGER NOT NULL DEFAULT 0,
-      raw_type TEXT NOT NULL DEFAULT '',
-      property_type TEXT NOT NULL DEFAULT '',
-      composite_score REAL NOT NULL DEFAULT 0,
-      value_score REAL NOT NULL DEFAULT 0,
-      sea_score REAL NOT NULL DEFAULT 0,
-      airport_score REAL NOT NULL DEFAULT 0,
-      location_score REAL NOT NULL DEFAULT 0,
-      character_score REAL NOT NULL DEFAULT 0,
-      social_potential_score REAL NOT NULL DEFAULT 0,
-      price_per_sqm REAL,
-      nearest_airport TEXT,
-      airport_distance_km REAL,
-      distance_to_sea_km REAL,
-      status TEXT NOT NULL DEFAULT 'qualified',
-      batch_date TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `);
-
-  db.run(`CREATE INDEX IF NOT EXISTS idx_properties_external_id ON properties(external_id)`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_properties_status ON properties(status)`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_properties_region ON properties(region)`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_properties_composite_score ON properties(composite_score)`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_properties_social_score ON properties(social_potential_score)`);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS social_contents (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      property_id INTEGER NOT NULL UNIQUE,
-      instagram_caption TEXT,
-      instagram_first_comment TEXT,
-      twitter_post TEXT,
-      reel_script TEXT,
-      summary TEXT,
-      carousel_photos TEXT,
-      instagram_status TEXT NOT NULL DEFAULT 'pending',
-      twitter_status TEXT NOT NULL DEFAULT 'pending',
-      reel_status TEXT NOT NULL DEFAULT 'pending',
-      generated_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS batches (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      date TEXT NOT NULL,
-      raw_count INTEGER NOT NULL DEFAULT 0,
-      qualified_count INTEGER NOT NULL DEFAULT 0,
-      selected_count INTEGER NOT NULL DEFAULT 0,
-      rejected_count INTEGER NOT NULL DEFAULT 0,
-      errors TEXT,
-      status TEXT NOT NULL DEFAULT 'completed',
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `);
-
-  // Seed from seed.sql
-  const seedPath = path.join(process.cwd(), "seed", "seed.sql");
-  if (fs.existsSync(seedPath)) {
-    const seedSql = fs.readFileSync(seedPath, "utf-8");
-    const lines = seedSql.split("\n").filter((l) => l.startsWith("INSERT "));
-    for (const line of lines) {
-      try { db.run(line); } catch { /* skip dupes */ }
-    }
-    console.log(`[db] Seeded from ${seedPath}`);
-  }
-
-  // Save to /tmp for warm invocations
-  const data = db.export();
-  fs.writeFileSync(tmpPath, Buffer.from(data));
-
-  return db;
-}
-
-// Save DB to /tmp after mutations
-function persistDb() {
-  if (!db) return;
-  try {
-    const data = db.export();
-    fs.writeFileSync("/tmp/italia-hunter.db", Buffer.from(data));
-  } catch { /* best effort */ }
-}
-
-// ────────────────────────────────────────────
-// Row conversion helpers
-// ────────────────────────────────────────────
-function rowsToObjects(result: any): any[] {
-  if (!result || !result[0]) return [];
-  const { columns, values } = result[0];
-  return values.map((row: any[]) => {
-    const obj: any = {};
-    columns.forEach((col: string, i: number) => {
-      obj[col] = row[i];
-    });
-    return obj;
-  });
-}
-
 function rowToProperty(row: any) {
   return {
     id: row.id,
@@ -215,7 +96,7 @@ function rowToProperty(row: any) {
     longitude: row.longitude,
     url: row.url,
     leadPhoto: row.lead_photo,
-    photos: row.photos ? JSON.parse(row.photos) : null,
+    photos: typeof row.photos === "string" ? JSON.parse(row.photos) : row.photos,
     photosCount: row.photos_count,
     rawType: row.raw_type,
     propertyType: row.property_type,
@@ -245,7 +126,7 @@ function rowToSocialContent(row: any) {
     twitterPost: row.twitter_post,
     reelScript: row.reel_script,
     summary: row.summary,
-    carouselPhotos: row.carousel_photos ? JSON.parse(row.carousel_photos) : null,
+    carouselPhotos: typeof row.carousel_photos === "string" ? JSON.parse(row.carousel_photos) : row.carousel_photos,
     instagramStatus: row.instagram_status,
     twitterStatus: row.twitter_status,
     reelStatus: row.reel_status,
@@ -261,7 +142,7 @@ function rowToBatch(row: any) {
     qualifiedCount: row.qualified_count,
     selectedCount: row.selected_count,
     rejectedCount: row.rejected_count,
-    errors: row.errors ? JSON.parse(row.errors) : null,
+    errors: typeof row.errors === "string" ? JSON.parse(row.errors) : row.errors,
     status: row.status,
     createdAt: row.created_at,
   };
@@ -284,104 +165,94 @@ const sortFieldMap: Record<string, string> = {
 // Route handlers
 // ────────────────────────────────────────────
 
-async function handleGetProperties(db: Database, query: any) {
-  const conditions: string[] = [];
-  const params: any[] = [];
+async function handleGetProperties(query: any) {
+  const filters: string[] = [];
 
-  if (query.region) {
-    conditions.push("LOWER(region) = LOWER(?)");
-    params.push(query.region);
-  }
-  if (query.status && query.status !== "all") {
-    conditions.push("status = ?");
-    params.push(query.status);
-  }
-  if (query.minScore) {
-    conditions.push("composite_score >= ?");
-    params.push(Number(query.minScore));
-  }
-  if (query.maxScore) {
-    conditions.push("composite_score <= ?");
-    params.push(Number(query.maxScore));
-  }
-  if (query.minPrice) {
-    conditions.push("price >= ?");
-    params.push(Number(query.minPrice));
-  }
-  if (query.maxPrice) {
-    conditions.push("price <= ?");
-    params.push(Number(query.maxPrice));
-  }
-  if (query.minSocialScore) {
-    conditions.push("social_potential_score >= ?");
-    params.push(Number(query.minSocialScore));
-  }
-  if (query.maxSocialScore) {
-    conditions.push("social_potential_score <= ?");
-    params.push(Number(query.maxSocialScore));
-  }
-  if (query.propertyType) {
-    conditions.push("LOWER(property_type) = LOWER(?)");
-    params.push(query.propertyType);
-  }
-  if (query.batchDate) {
-    conditions.push("batch_date = ?");
-    params.push(query.batchDate);
-  }
-
-  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-
-  const countResult = db.exec(`SELECT COUNT(*) as count FROM properties ${where}`, params);
-  const total = countResult[0]?.values[0]?.[0] || 0;
+  if (query.region) filters.push(`region=ilike.${query.region}`);
+  if (query.status && query.status !== "all") filters.push(`status=eq.${query.status}`);
+  if (query.minScore) filters.push(`composite_score=gte.${Number(query.minScore)}`);
+  if (query.maxScore) filters.push(`composite_score=lte.${Number(query.maxScore)}`);
+  if (query.minPrice) filters.push(`price=gte.${Number(query.minPrice)}`);
+  if (query.maxPrice) filters.push(`price=lte.${Number(query.maxPrice)}`);
+  if (query.minSocialScore) filters.push(`social_potential_score=gte.${Number(query.minSocialScore)}`);
+  if (query.maxSocialScore) filters.push(`social_potential_score=lte.${Number(query.maxSocialScore)}`);
+  if (query.propertyType) filters.push(`property_type=ilike.${query.propertyType}`);
+  if (query.batchDate) filters.push(`batch_date=eq.${query.batchDate}`);
 
   const sortParam = (query.sort as string) || "-compositeScore";
   const desc = sortParam.startsWith("-");
   const fieldName = desc ? sortParam.slice(1) : sortParam;
   const dbColumn = sortFieldMap[fieldName] || "composite_score";
-  const direction = desc ? "DESC" : "ASC";
+  const order = `${dbColumn}.${desc ? "desc" : "asc"}`;
 
   const limit = query.limit ? Number(query.limit) : 50;
   const offset = query.offset ? Number(query.offset) : 0;
 
-  const rows = rowsToObjects(
-    db.exec(
-      `SELECT * FROM properties ${where} ORDER BY ${dbColumn} ${direction} LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
-    )
-  );
+  // Get count via HEAD + Prefer: count=exact
+  const countUrl = `${SUPABASE_URL}/rest/v1/properties?select=id&${filters.join("&")}`;
+  const countResp = await fetch(countUrl, {
+    method: "HEAD",
+    headers: {
+      ...supabaseHeaders,
+      Prefer: "count=exact",
+    },
+  });
+  const contentRange = countResp.headers.get("content-range") || "";
+  const total = contentRange.includes("/") ? Number(contentRange.split("/")[1]) : 0;
 
-  return { properties: rows.map(rowToProperty), total };
+  // Get rows
+  const qs = [
+    "select=*",
+    ...filters,
+    `order=${order}`,
+    `limit=${limit}`,
+    `offset=${offset}`,
+  ].join("&");
+
+  const rows = await supabase("properties", { query: qs });
+  return { properties: (rows || []).map(rowToProperty), total };
 }
 
-async function handleGetProperty(db: Database, id: number) {
-  const rows = rowsToObjects(db.exec("SELECT * FROM properties WHERE id = ?", [id]));
-  if (rows.length === 0) return null;
+async function handleGetProperty(id: number) {
+  const row = await supabase("properties", {
+    query: `select=*&id=eq.${id}`,
+    single: true,
+  });
+  if (!row) return null;
 
-  const property = rowToProperty(rows[0]);
-  const socialRows = rowsToObjects(db.exec("SELECT * FROM social_contents WHERE property_id = ?", [id]));
-  const socialContent = socialRows.length > 0 ? rowToSocialContent(socialRows[0]) : null;
+  const property = rowToProperty(row);
+  const socialRows = await supabase("social_contents", {
+    query: `select=*&property_id=eq.${id}`,
+  });
+  const socialContent = socialRows && socialRows.length > 0 ? rowToSocialContent(socialRows[0]) : null;
 
   return { ...property, socialContent };
 }
 
-async function handleGetStats(db: Database) {
+async function handleGetStats() {
   const today = new Date().toISOString().split("T")[0];
 
-  const totalResult = db.exec("SELECT COUNT(*) as count FROM properties");
-  const totalProperties = totalResult[0]?.values[0]?.[0] || 0;
+  // Total count
+  const totalResp = await fetch(`${SUPABASE_URL}/rest/v1/properties?select=id`, {
+    method: "HEAD",
+    headers: { ...supabaseHeaders, Prefer: "count=exact" },
+  });
+  const totalRange = totalResp.headers.get("content-range") || "";
+  const totalProperties = totalRange.includes("/") ? Number(totalRange.split("/")[1]) : 0;
 
-  const qualifiedTodayResult = db.exec(
-    "SELECT COUNT(*) as count FROM properties WHERE batch_date = ? AND status = 'qualified'",
-    [today]
-  );
-  const qualifiedToday = qualifiedTodayResult[0]?.values[0]?.[0] || 0;
+  // Qualified today
+  const qualTodayResp = await fetch(`${SUPABASE_URL}/rest/v1/properties?select=id&batch_date=eq.${today}&status=eq.qualified`, {
+    method: "HEAD",
+    headers: { ...supabaseHeaders, Prefer: "count=exact" },
+  });
+  const qualRange = qualTodayResp.headers.get("content-range") || "";
+  const qualifiedToday = qualRange.includes("/") ? Number(qualRange.split("/")[1]) : 0;
 
-  const statusRows = rowsToObjects(
-    db.exec("SELECT status, COUNT(*) as count FROM properties GROUP BY status")
-  );
+  // Status counts — fetch all properties' statuses
+  const allStatuses = await supabase("properties", { query: "select=status" });
   const statusMap: Record<string, number> = {};
-  for (const row of statusRows) {
-    statusMap[row.status] = row.count;
+  for (const row of allStatuses || []) {
+    statusMap[row.status] = (statusMap[row.status] || 0) + 1;
   }
 
   const pipeline = {
@@ -392,6 +263,8 @@ async function handleGetStats(db: Database) {
     rejected: statusMap["rejected"] || 0,
   };
 
+  // Score distribution
+  const allScores = await supabase("properties", { query: "select=composite_score" });
   const ranges = [
     { range: "90-100", min: 90, max: 100 },
     { range: "80-89", min: 80, max: 89 },
@@ -401,25 +274,31 @@ async function handleGetStats(db: Database) {
     { range: "0-49", min: 0, max: 49 },
   ];
   const scoreDistribution = ranges.map(({ range, min, max }) => {
-    const result = db.exec(
-      "SELECT COUNT(*) as count FROM properties WHERE composite_score >= ? AND composite_score <= ?",
-      [min, max]
-    );
-    return { range, count: result[0]?.values[0]?.[0] || 0 };
+    const count = (allScores || []).filter(
+      (r: any) => r.composite_score >= min && r.composite_score <= max
+    ).length;
+    return { range, count };
   });
 
-  const regionRows = rowsToObjects(
-    db.exec("SELECT region, COUNT(*) as count FROM properties GROUP BY region ORDER BY count DESC")
-  );
-  const regionBreakdown = regionRows.map((r: any) => ({
-    region: r.region.charAt(0).toUpperCase() + r.region.slice(1).toLowerCase(),
-    count: r.count,
-  }));
+  // Region breakdown
+  const allRegions = await supabase("properties", { query: "select=region" });
+  const regionCounts: Record<string, number> = {};
+  for (const r of allRegions || []) {
+    const key = r.region || "Unknown";
+    regionCounts[key] = (regionCounts[key] || 0) + 1;
+  }
+  const regionBreakdown = Object.entries(regionCounts)
+    .map(([region, count]) => ({
+      region: region.charAt(0).toUpperCase() + region.slice(1).toLowerCase(),
+      count,
+    }))
+    .sort((a, b) => b.count - a.count);
 
-  const batchRows = rowsToObjects(
-    db.exec("SELECT * FROM batches ORDER BY date DESC LIMIT 1")
-  );
-  const latestBatch = batchRows.length > 0 ? rowToBatch(batchRows[0]) : null;
+  // Latest batch
+  const batchRows = await supabase("batches", {
+    query: "select=*&order=date.desc&limit=1",
+  });
+  const latestBatch = batchRows && batchRows.length > 0 ? rowToBatch(batchRows[0]) : null;
 
   return {
     totalProperties,
@@ -435,72 +314,102 @@ async function handleGetStats(db: Database) {
   };
 }
 
-async function handleImportProperties(db: Database, items: any[]) {
+async function handleImportProperties(items: any[]) {
   const today = new Date().toISOString().split("T")[0];
   let imported = 0, skipped = 0, updated = 0;
 
   for (const item of items) {
-    const existing = rowsToObjects(
-      db.exec("SELECT id, status FROM properties WHERE external_id = ?", [item.id])
-    );
+    const existing = await supabase("properties", {
+      query: `select=id,status&external_id=eq.${encodeURIComponent(item.id)}`,
+    });
     const photosJson = item.photos ? JSON.stringify(item.photos) : null;
+    const now = new Date().toISOString();
 
-    if (existing.length > 0) {
-      db.run(
-        `UPDATE properties SET
-          price=?, size=?, rooms=?, bathrooms=?, title=?, description=?,
-          town=?, province=?, region=?, address=?, latitude=?, longitude=?,
-          url=?, lead_photo=?, photos=?, photos_count=?, raw_type=?, property_type=?,
-          composite_score=?, value_score=?, sea_score=?, airport_score=?,
-          location_score=?, character_score=?, social_potential_score=?,
-          price_per_sqm=?, nearest_airport=?, airport_distance_km=?, distance_to_sea_km=?,
-          batch_date=?, updated_at=datetime('now')
-        WHERE external_id=?`,
-        [
-          item.price, item.size ?? null, item.rooms ?? null, item.bathrooms ?? null,
-          item.title, item.description,
-          item.town, item.province, item.region, item.address ?? null,
-          item.latitude ?? null, item.longitude ?? null,
-          item.url, item.lead_photo ?? null, photosJson, item.photos_count ?? 0,
-          item.raw_type, item.property_type,
-          item.composite_score, item.value_score, item.sea_score, item.airport_score,
-          item.location_score, item.character_score, item.social_potential_score ?? 0,
-          item.price_per_m2 ?? null, item.nearest_airport ?? null,
-          item.airport_distance_km ?? null, item.distance_to_sea_km ?? null,
-          today, item.id,
-        ]
-      );
+    if (existing && existing.length > 0) {
+      await supabase("properties", {
+        method: "PATCH",
+        query: `external_id=eq.${encodeURIComponent(item.id)}`,
+        body: {
+          price: item.price,
+          size: item.size ?? null,
+          rooms: item.rooms ?? null,
+          bathrooms: item.bathrooms ?? null,
+          title: item.title,
+          description: item.description,
+          town: item.town,
+          province: item.province,
+          region: item.region,
+          address: item.address ?? null,
+          latitude: item.latitude ?? null,
+          longitude: item.longitude ?? null,
+          url: item.url,
+          lead_photo: item.lead_photo ?? null,
+          photos: photosJson,
+          photos_count: item.photos_count ?? 0,
+          raw_type: item.raw_type,
+          property_type: item.property_type,
+          composite_score: item.composite_score,
+          value_score: item.value_score,
+          sea_score: item.sea_score,
+          airport_score: item.airport_score,
+          location_score: item.location_score,
+          character_score: item.character_score,
+          social_potential_score: item.social_potential_score ?? 0,
+          price_per_sqm: item.price_per_m2 ?? null,
+          nearest_airport: item.nearest_airport ?? null,
+          airport_distance_km: item.airport_distance_km ?? null,
+          distance_to_sea_km: item.distance_to_sea_km ?? null,
+          batch_date: today,
+          updated_at: now,
+        },
+        prefer: "return=minimal",
+      });
       updated++;
     } else {
-      db.run(
-        `INSERT INTO properties (
-          external_id, price, size, rooms, bathrooms, title, description,
-          town, province, region, address, latitude, longitude, url,
-          lead_photo, photos, photos_count, raw_type, property_type,
-          composite_score, value_score, sea_score, airport_score,
-          location_score, character_score, social_potential_score,
-          price_per_sqm, nearest_airport, airport_distance_km, distance_to_sea_km,
-          status, batch_date, created_at, updated_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'qualified',?,datetime('now'),datetime('now'))`,
-        [
-          item.id, item.price, item.size ?? null, item.rooms ?? null, item.bathrooms ?? null,
-          item.title, item.description,
-          item.town, item.province, item.region, item.address ?? null,
-          item.latitude ?? null, item.longitude ?? null,
-          item.url, item.lead_photo ?? null, photosJson, item.photos_count ?? 0,
-          item.raw_type, item.property_type,
-          item.composite_score, item.value_score, item.sea_score, item.airport_score,
-          item.location_score, item.character_score, item.social_potential_score ?? 0,
-          item.price_per_m2 ?? null, item.nearest_airport ?? null,
-          item.airport_distance_km ?? null, item.distance_to_sea_km ?? null,
-          today,
-        ]
-      );
+      await supabase("properties", {
+        method: "POST",
+        body: {
+          external_id: item.id,
+          price: item.price,
+          size: item.size ?? null,
+          rooms: item.rooms ?? null,
+          bathrooms: item.bathrooms ?? null,
+          title: item.title,
+          description: item.description,
+          town: item.town,
+          province: item.province,
+          region: item.region,
+          address: item.address ?? null,
+          latitude: item.latitude ?? null,
+          longitude: item.longitude ?? null,
+          url: item.url,
+          lead_photo: item.lead_photo ?? null,
+          photos: photosJson,
+          photos_count: item.photos_count ?? 0,
+          raw_type: item.raw_type,
+          property_type: item.property_type,
+          composite_score: item.composite_score,
+          value_score: item.value_score,
+          sea_score: item.sea_score,
+          airport_score: item.airport_score,
+          location_score: item.location_score,
+          character_score: item.character_score,
+          social_potential_score: item.social_potential_score ?? 0,
+          price_per_sqm: item.price_per_m2 ?? null,
+          nearest_airport: item.nearest_airport ?? null,
+          airport_distance_km: item.airport_distance_km ?? null,
+          distance_to_sea_km: item.distance_to_sea_km ?? null,
+          status: "qualified",
+          batch_date: today,
+          created_at: now,
+          updated_at: now,
+        },
+        prefer: "return=minimal",
+      });
       imported++;
     }
   }
 
-  persistDb();
   return { imported, skipped, updated };
 }
 
@@ -550,11 +459,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(401).json({ message: "Unauthorized — please log in" });
     }
 
-    const database = await getDb();
-
     // ── GET /api/properties
     if (apiPath === "/properties" && method === "GET") {
-      const result = await handleGetProperties(database, query);
+      const result = await handleGetProperties(query);
       return res.status(200).json(result);
     }
 
@@ -562,7 +469,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const propertyMatch = apiPath.match(/^\/properties\/(\d+)$/);
     if (propertyMatch && method === "GET") {
       const id = Number(propertyMatch[1]);
-      const result = await handleGetProperty(database, id);
+      const result = await handleGetProperty(id);
       if (!result) return res.status(404).json({ message: "Property not found" });
       return res.status(200).json(result);
     }
@@ -572,48 +479,57 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (statusMatch && method === "PATCH") {
       const id = Number(statusMatch[1]);
       const { status } = req.body;
-      db!.run("UPDATE properties SET status = ?, updated_at = datetime('now') WHERE id = ?", [status, id]);
-      persistDb();
-      const updated = rowsToObjects(db!.exec("SELECT * FROM properties WHERE id = ?", [id]));
-      if (updated.length === 0) return res.status(404).json({ message: "Property not found" });
-      return res.status(200).json(rowToProperty(updated[0]));
+      await supabase("properties", {
+        method: "PATCH",
+        query: `id=eq.${id}`,
+        body: { status, updated_at: new Date().toISOString() },
+        prefer: "return=minimal",
+      });
+      const updated = await supabase("properties", {
+        query: `select=*&id=eq.${id}`,
+        single: true,
+      });
+      if (!updated) return res.status(404).json({ message: "Property not found" });
+      return res.status(200).json(rowToProperty(updated));
     }
 
     // ── POST /api/properties/import
     if (apiPath === "/properties/import" && method === "POST") {
       const items = req.body;
       if (!Array.isArray(items)) return res.status(400).json({ message: "Body must be an array" });
-      const result = await handleImportProperties(database, items);
+      const result = await handleImportProperties(items);
       return res.status(200).json(result);
     }
 
     // ── GET /api/stats
     if (apiPath === "/stats" && method === "GET") {
-      const result = await handleGetStats(database);
+      const result = await handleGetStats();
       return res.status(200).json(result);
     }
 
     // ── GET /api/batches
     if (apiPath === "/batches" && method === "GET") {
-      const rows = rowsToObjects(database.exec("SELECT * FROM batches ORDER BY date DESC"));
-      return res.status(200).json(rows.map(rowToBatch));
+      const rows = await supabase("batches", { query: "select=*&order=date.desc" });
+      return res.status(200).json((rows || []).map(rowToBatch));
     }
 
     // ── GET /api/batches/:date/properties
     const batchPropsMatch = apiPath.match(/^\/batches\/([^/]+)\/properties$/);
     if (batchPropsMatch && method === "GET") {
-      const rows = rowsToObjects(
-        database.exec("SELECT * FROM properties WHERE batch_date = ?", [batchPropsMatch[1]])
-      );
-      return res.status(200).json(rows.map(rowToProperty));
+      const rows = await supabase("properties", {
+        query: `select=*&batch_date=eq.${encodeURIComponent(batchPropsMatch[1])}`,
+      });
+      return res.status(200).json((rows || []).map(rowToProperty));
     }
 
     // ── GET /api/properties/:id/social
     const socialMatch = apiPath.match(/^\/properties\/(\d+)\/social$/);
     if (socialMatch && method === "GET") {
       const id = Number(socialMatch[1]);
-      const rows = rowsToObjects(database.exec("SELECT * FROM social_contents WHERE property_id = ?", [id]));
-      if (rows.length === 0) return res.status(404).json({ message: "Social content not found" });
+      const rows = await supabase("social_contents", {
+        query: `select=*&property_id=eq.${id}`,
+      });
+      if (!rows || rows.length === 0) return res.status(404).json({ message: "Social content not found" });
       return res.status(200).json(rowToSocialContent(rows[0]));
     }
 
@@ -629,27 +545,52 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       };
       const field = fieldMap[platform];
       if (!field) return res.status(400).json({ message: "Invalid platform" });
-      database.run(`UPDATE social_contents SET ${field} = ? WHERE property_id = ?`, [status, id]);
+
+      await supabase("social_contents", {
+        method: "PATCH",
+        query: `property_id=eq.${id}`,
+        body: { [field]: status },
+        prefer: "return=minimal",
+      });
 
       // Auto-sync property status based on social content status
-      const socialRow = rowsToObjects(database.exec("SELECT * FROM social_contents WHERE property_id = ?", [id]));
-      if (socialRow.length > 0) {
-        const s = socialRow[0];
+      const socialRows = await supabase("social_contents", {
+        query: `select=instagram_status,twitter_status&property_id=eq.${id}`,
+      });
+      if (socialRows && socialRows.length > 0) {
+        const s = socialRows[0];
         const igStatus = s.instagram_status;
         const twStatus = s.twitter_status;
+        const now = new Date().toISOString();
         if (igStatus === "posted" && twStatus === "posted") {
-          database.run("UPDATE properties SET status = 'posted', updated_at = datetime('now') WHERE id = ?", [id]);
+          await supabase("properties", {
+            method: "PATCH",
+            query: `id=eq.${id}`,
+            body: { status: "posted", updated_at: now },
+            prefer: "return=minimal",
+          });
         } else if (igStatus === "approved" && twStatus === "approved") {
-          database.run("UPDATE properties SET status = 'content_ready', updated_at = datetime('now') WHERE id = ?", [id]);
+          await supabase("properties", {
+            method: "PATCH",
+            query: `id=eq.${id}`,
+            body: { status: "content_ready", updated_at: now },
+            prefer: "return=minimal",
+          });
         } else if (igStatus === "approved" || twStatus === "approved") {
           // At least one approved — mark as selected if still qualified
-          database.run("UPDATE properties SET status = 'selected', updated_at = datetime('now') WHERE id = ? AND status = 'qualified'", [id]);
+          await supabase("properties", {
+            method: "PATCH",
+            query: `id=eq.${id}&status=eq.qualified`,
+            body: { status: "selected", updated_at: now },
+            prefer: "return=minimal",
+          });
         }
       }
 
-      persistDb();
-      const rows = rowsToObjects(database.exec("SELECT * FROM social_contents WHERE property_id = ?", [id]));
-      if (rows.length === 0) return res.status(404).json({ message: "Social content not found" });
+      const rows = await supabase("social_contents", {
+        query: `select=*&property_id=eq.${id}`,
+      });
+      if (!rows || rows.length === 0) return res.status(404).json({ message: "Social content not found" });
       return res.status(200).json(rowToSocialContent(rows[0]));
     }
 
@@ -665,43 +606,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       };
       const field = fieldMap[platform];
       if (!field) return res.status(400).json({ message: "Invalid platform" });
-      database.run(`UPDATE social_contents SET ${field} = ? WHERE property_id = ?`, [text, id]);
-      persistDb();
-      const rows = rowsToObjects(database.exec("SELECT * FROM social_contents WHERE property_id = ?", [id]));
-      if (rows.length === 0) return res.status(404).json({ message: "Social content not found" });
+
+      await supabase("social_contents", {
+        method: "PATCH",
+        query: `property_id=eq.${id}`,
+        body: { [field]: text },
+        prefer: "return=minimal",
+      });
+
+      const rows = await supabase("social_contents", {
+        query: `select=*&property_id=eq.${id}`,
+      });
+      if (!rows || rows.length === 0) return res.status(404).json({ message: "Social content not found" });
       return res.status(200).json(rowToSocialContent(rows[0]));
     }
 
     // ── GET /api/content-queue
     if (apiPath === "/content-queue" && method === "GET") {
-      const rows = rowsToObjects(
-        database.exec(`
-          SELECT p.*, s.id as s_id, s.property_id as s_property_id,
-            s.instagram_caption, s.instagram_first_comment, s.twitter_post, s.reel_script, s.summary as s_summary,
-            s.carousel_photos as s_carousel_photos,
-            s.instagram_status, s.twitter_status, s.reel_status, s.generated_at
-          FROM properties p
-          INNER JOIN social_contents s ON s.property_id = p.id
-          ORDER BY p.social_potential_score DESC
-        `)
+      // Fetch social contents with their linked properties
+      const socialRows = await supabase("social_contents", {
+        query: "select=*,properties(*)",
+      });
+      if (!socialRows || socialRows.length === 0) return res.status(200).json([]);
+
+      // Sort by property's social_potential_score desc
+      const sorted = socialRows.sort(
+        (a: any, b: any) => (b.properties?.social_potential_score || 0) - (a.properties?.social_potential_score || 0)
       );
-      const result = rows.map((row: any) => ({
-        ...rowToProperty(row),
-        socialContent: {
-          id: row.s_id,
-          propertyId: row.s_property_id,
-          instagramCaption: row.instagram_caption,
-          instagramFirstComment: row.instagram_first_comment,
-          twitterPost: row.twitter_post,
-          reelScript: row.reel_script,
-          summary: row.s_summary,
-          carouselPhotos: row.s_carousel_photos ? JSON.parse(row.s_carousel_photos) : null,
-          instagramStatus: row.instagram_status,
-          twitterStatus: row.twitter_status,
-          reelStatus: row.reel_status,
-          generatedAt: row.generated_at,
-        },
-      }));
+
+      const result = sorted.map((row: any) => {
+        const prop = row.properties;
+        if (!prop) return null;
+        return {
+          ...rowToProperty(prop),
+          socialContent: rowToSocialContent(row),
+        };
+      }).filter(Boolean);
+
       return res.status(200).json(result);
     }
 
@@ -710,47 +651,58 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const items = req.body;
       if (!Array.isArray(items)) return res.status(400).json({ message: "Body must be an array" });
       let importCount = 0;
+      const now = new Date().toISOString();
+
       for (const item of items) {
         if (!item.propertyId) continue;
         const carouselJson = item.carouselPhotos ? JSON.stringify(item.carouselPhotos) : null;
-        database.run(
-          `INSERT INTO social_contents (property_id, instagram_caption, instagram_first_comment, twitter_post, reel_script, summary, carousel_photos, instagram_status, twitter_status, reel_status, generated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', 'pending', datetime('now'))
-           ON CONFLICT(property_id) DO UPDATE SET
-             instagram_caption = excluded.instagram_caption,
-             instagram_first_comment = excluded.instagram_first_comment,
-             twitter_post = excluded.twitter_post,
-             reel_script = excluded.reel_script,
-             summary = excluded.summary,
-             carousel_photos = excluded.carousel_photos,
-             generated_at = datetime('now')`,
-          [item.propertyId, item.instagramCaption || null, item.instagramFirstComment || null, item.twitterPost || null, item.reelScript || null, item.summary || null, carouselJson]
-        );
+
+        // Upsert social content (on_conflict property_id)
+        await supabase("social_contents", {
+          method: "POST",
+          body: {
+            property_id: item.propertyId,
+            instagram_caption: item.instagramCaption || null,
+            instagram_first_comment: item.instagramFirstComment || null,
+            twitter_post: item.twitterPost || null,
+            reel_script: item.reelScript || null,
+            summary: item.summary || null,
+            carousel_photos: carouselJson,
+            instagram_status: "pending",
+            twitter_status: "pending",
+            reel_status: "pending",
+            generated_at: now,
+          },
+          prefer: "return=minimal,resolution=merge-duplicates",
+        });
+
         // Auto-set property status to 'selected' when content is generated
-        database.run("UPDATE properties SET status = 'selected', updated_at = datetime('now') WHERE id = ? AND status = 'qualified'", [item.propertyId]);
+        await supabase("properties", {
+          method: "PATCH",
+          query: `id=eq.${item.propertyId}&status=eq.qualified`,
+          body: { status: "selected", updated_at: now },
+          prefer: "return=minimal",
+        });
         importCount++;
       }
-      persistDb();
+
       return res.status(200).json({ imported: importCount });
     }
 
     // ── GET /api/social/contents
     if (apiPath === "/social/contents" && method === "GET") {
-      const rows = rowsToObjects(
-        database.exec(`
-          SELECT s.*, p.lead_photo, p.town, p.province
-          FROM social_contents s
-          LEFT JOIN properties p ON p.id = s.property_id
-          ORDER BY s.generated_at DESC
-        `)
-      );
-      const contents = rows.map((row: any) => ({
+      const rows = await supabase("social_contents", {
+        query: "select=*,properties(lead_photo,town,province)&order=generated_at.desc",
+      });
+      const contents = (rows || []).map((row: any) => ({
         ...rowToSocialContent(row),
-        property: {
-          leadPhoto: row.lead_photo,
-          town: row.town,
-          province: row.province,
-        },
+        property: row.properties
+          ? {
+              leadPhoto: row.properties.lead_photo,
+              town: row.properties.town,
+              province: row.properties.province,
+            }
+          : null,
       }));
       return res.status(200).json({ contents });
     }
@@ -758,13 +710,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ── POST /api/batches
     if (apiPath === "/batches" && method === "POST") {
       const batch = req.body;
-      database.run(
-        "INSERT INTO batches (date, raw_count, qualified_count, selected_count, rejected_count, errors, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [batch.date, batch.rawCount || 0, batch.qualifiedCount || 0, batch.selectedCount || 0, batch.rejectedCount || 0, batch.errors ? JSON.stringify(batch.errors) : null, batch.status || "completed"]
-      );
-      persistDb();
-      const rows = rowsToObjects(database.exec("SELECT * FROM batches ORDER BY id DESC LIMIT 1"));
-      return res.status(201).json(rows.length > 0 ? rowToBatch(rows[0]) : {});
+      const inserted = await supabase("batches", {
+        method: "POST",
+        body: {
+          date: batch.date,
+          raw_count: batch.rawCount || 0,
+          qualified_count: batch.qualifiedCount || 0,
+          selected_count: batch.selectedCount || 0,
+          rejected_count: batch.rejectedCount || 0,
+          errors: batch.errors ? JSON.stringify(batch.errors) : null,
+          status: batch.status || "completed",
+          created_at: new Date().toISOString(),
+        },
+        prefer: "return=representation",
+      });
+      const result = Array.isArray(inserted) ? inserted[0] : inserted;
+      return res.status(201).json(result ? rowToBatch(result) : {});
     }
 
     // ── POST /api/buffer/publish
@@ -778,10 +739,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // Get property and social content
-      const propRows = rowsToObjects(database.exec("SELECT * FROM properties WHERE id = ?", [propertyId]));
-      if (propRows.length === 0) return res.status(404).json({ message: "Property not found" });
-      const socialRows = rowsToObjects(database.exec("SELECT * FROM social_contents WHERE property_id = ?", [propertyId]));
-      if (socialRows.length === 0) return res.status(404).json({ message: "Social content not found" });
+      const prop = await supabase("properties", {
+        query: `select=*&id=eq.${propertyId}`,
+        single: true,
+      });
+      if (!prop) return res.status(404).json({ message: "Property not found" });
+
+      const socialRows = await supabase("social_contents", {
+        query: `select=*&property_id=eq.${propertyId}`,
+      });
+      if (!socialRows || socialRows.length === 0) return res.status(404).json({ message: "Social content not found" });
       const social = rowToSocialContent(socialRows[0]);
 
       // Check approved
@@ -823,7 +790,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         if (platform === "instagram") {
           const igMeta: any = { type: withPhotos.length > 1 ? "carousel" : "post", shouldShareToFeed: true };
-          // Add first comment (hashtags) if available
           if (social.instagramFirstComment) {
             igMeta.firstComment = social.instagramFirstComment;
           }
@@ -831,7 +797,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         const r = await fetch("https://api.buffer.com/graphql", {
           method: "POST",
-          headers: { "Authorization": `Bearer ${BUFFER_TOKEN}`, "Content-Type": "application/json" },
+          headers: { Authorization: `Bearer ${BUFFER_TOKEN}`, "Content-Type": "application/json" },
           body: JSON.stringify({ query: mutation, variables: { input } }),
         });
         return r.json();
@@ -840,11 +806,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Try with photos first, fall back to fewer photos or text-only
       let bufferData = await attemptBufferPost(photoUrls);
       if (bufferData.data?.createPost?.message && photoUrls.length > 0) {
-        // Photos failed — retry with just first photo
         if (photoUrls.length > 1) {
           bufferData = await attemptBufferPost([photoUrls[0]]);
         }
-        // If still failing, try text-only (for X) or fail for IG (which requires images)
         if (bufferData.data?.createPost?.message && platform === "twitter") {
           bufferData = await attemptBufferPost([]);
         }
@@ -856,13 +820,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const result = bufferData.data?.createPost;
       if (result?.post) {
         const field = platform === "instagram" ? "instagram_status" : "twitter_status";
-        database.run(`UPDATE social_contents SET ${field} = 'posted' WHERE property_id = ?`, [propertyId]);
+        await supabase("social_contents", {
+          method: "PATCH",
+          query: `property_id=eq.${propertyId}`,
+          body: { [field]: "posted" },
+          prefer: "return=minimal",
+        });
         // Auto-sync property status
-        const afterPost = rowsToObjects(database.exec("SELECT instagram_status, twitter_status FROM social_contents WHERE property_id = ?", [propertyId]));
-        if (afterPost.length > 0 && afterPost[0].instagram_status === "posted" && afterPost[0].twitter_status === "posted") {
-          database.run("UPDATE properties SET status = 'posted', updated_at = datetime('now') WHERE id = ?", [propertyId]);
+        const afterPost = await supabase("social_contents", {
+          query: `select=instagram_status,twitter_status&property_id=eq.${propertyId}`,
+        });
+        if (afterPost && afterPost.length > 0 && afterPost[0].instagram_status === "posted" && afterPost[0].twitter_status === "posted") {
+          await supabase("properties", {
+            method: "PATCH",
+            query: `id=eq.${propertyId}`,
+            body: { status: "posted", updated_at: new Date().toISOString() },
+            prefer: "return=minimal",
+          });
         }
-        persistDb();
         return res.status(200).json({ success: true, bufferPostId: result.post.id, status: result.post.status, platform });
       } else {
         return res.status(502).json({ message: result?.message || "Unknown Buffer error" });
