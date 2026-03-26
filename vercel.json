@@ -18,10 +18,17 @@
         { "key": "Content-Type", "value": "video/mp4" },
         { "key": "Access-Control-Allow-Origin", "value": "*" }
       ]
+    },
+    {
+      "source": "/photos/(.+)\\.(jpg|jpeg|webp|png)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" },
+        { "key": "Access-Control-Allow-Origin", "value": "*" }
+      ]
     }
   ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/[...path]" },
-    { "source": "/((?!api/|reels/).*)", "destination": "/index.html" }
+    { "source": "/((?!api/|reels/|photos/).*)", "destination": "/index.html" }
   ]
 }
