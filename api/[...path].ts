@@ -411,16 +411,29 @@ async function pushToBuffer(
     }
   `;
 
-  const imageAssets = hostedPhotos.slice(0, 4)
-    .filter(u => u && u.startsWith("http"))
-    .map(url => ({ url }));
-  const assetsInput = imageAssets.length > 0 ? { images: imageAssets } : undefined;
+  const validPhotos = hostedPhotos.filter(u => u && u.startsWith("http"));
+  // Distribute photos across thread tweets: tweet1→p0, tweet2→p1, tweet3→p2+p3
+  const photoAssets = (urls: string[]) =>
+    urls.length > 0 ? { images: urls.map(url => ({ url })) } : undefined;
+
+  // For Instagram: all photos on single post
+  const igAssetsInput = photoAssets(validPhotos.slice(0, 4));
 
   let ok = false;
 
   // ── X / Twitter: post as thread ──────────────────────────────────
   if (tweetThread.length > 0) {
     const [tweet1, ...rest] = tweetThread;
+    // Distribute: tweet1 gets photo[0], tweet2 gets photo[1], tweet3 gets photos[2,3]
+    const t1Assets = photoAssets(validPhotos.slice(0, 1));
+    const threadItems = rest.map((text, i) => {
+      const photoIdx = i + 1; // tweet2 → index 1, tweet3 → index 2
+      const photos = i === rest.length - 1
+        ? validPhotos.slice(photoIdx) // last tweet gets remaining photos
+        : validPhotos.slice(photoIdx, photoIdx + 1);
+      const assets = photoAssets(photos);
+      return assets ? { text, assets } : { text };
+    });
     const xBody = {
       query: mutation,
       variables: {
@@ -429,13 +442,9 @@ async function pushToBuffer(
           schedulingType: "automatic",
           mode: "addToQueue",
           text: tweet1,
-          ...(assetsInput ? { assets: assetsInput } : {}),
-          ...(rest.length > 0 ? {
-            metadata: {
-              twitter: {
-                thread: rest.map(t => ({ text: t })),
-              },
-            },
+          ...(t1Assets ? { assets: t1Assets } : {}),
+          ...(threadItems.length > 0 ? {
+            metadata: { twitter: { thread: threadItems } },
           } : {}),
         },
       },
@@ -457,7 +466,7 @@ async function pushToBuffer(
           schedulingType: "automatic",
           mode: "addToQueue",
           text: instagramCaption,
-          ...(assetsInput ? { assets: assetsInput } : {}),
+          ...(igAssetsInput ? { assets: igAssetsInput } : {}),
           ...(instagramFirstComment ? {
             metadata: {
               instagram: {
