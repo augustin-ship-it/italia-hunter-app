@@ -389,7 +389,8 @@ async function uploadPhotoToStorage(data: ArrayBuffer, filename: string, content
  * Minimum 45 min ahead to avoid immediate posting.
  */
 function nextOptimalSlot(minMinutesAhead = 45): string {
-  const SLOTS_UTC = [6, 10, 16, 19]; // hours in UTC
+  // Target windows in UTC (CEST = UTC+2): EU morning / EU lunch / EU evening / US prime time
+  const SLOTS_UTC = [6, 10, 16, 19];
   const minAheadMs = minMinutesAhead * 60 * 1000;
   const now = Date.now();
   for (let daysAhead = 0; daysAhead <= 7; daysAhead++) {
@@ -397,6 +398,9 @@ function nextOptimalSlot(minMinutesAhead = 45): string {
       const d = new Date(now);
       d.setUTCDate(d.getUTCDate() + daysAhead);
       d.setUTCHours(hour, 0, 0, 0);
+      // Random jitter ±(15-25 min) so posts don't look like a cron job
+      const jitter = (Math.floor(Math.random() * 21) - 10 + (Math.random() > 0.5 ? 8 : -8)) * 60 * 1000;
+      d.setTime(d.getTime() + jitter);
       if (d.getTime() > now + minAheadMs) return d.toISOString();
     }
   }
