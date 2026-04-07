@@ -437,7 +437,7 @@ async function pushToBuffer(
   const mutation = `
     mutation CreatePost($input: CreatePostInput!) {
       createPost(input: $input) {
-        ... on PostActionSuccess { post { id status scheduledAt } }
+        ... on PostActionSuccess { post { id status dueAt shareMode } }
         ... on MutationError { message }
       }
     }
@@ -448,7 +448,7 @@ async function pushToBuffer(
     urls.length > 0 ? { images: urls.map(url => ({ url })) } : undefined;
 
   // Schedule at next EU/US optimal slot — distributed by slotOffset
-  const scheduledAt = nextOptimalSlot(slotOffset);
+  const dueAt = nextOptimalSlot(slotOffset);
 
   let ok = false;
 
@@ -468,8 +468,9 @@ async function pushToBuffer(
       variables: {
         input: {
           channelId: BUFFER_X_CHANNEL,
-          schedulingType: "scheduled",
-          scheduledAt,
+          schedulingType: "automatic",
+          mode: "customScheduled",
+          dueAt,
           text: tweet1,
           ...(t1Assets ? { assets: t1Assets } : {}),
           ...(threadItems.length > 0 ? {
@@ -480,7 +481,7 @@ async function pushToBuffer(
     };
     const xResult = await bufferFetch(xBody);
     const xOk = !!xResult?.data?.createPost?.post?.id;
-    if (xOk) console.log("[pushToBuffer] X scheduled:", xResult.data.createPost.post.id, "at", scheduledAt);
+    if (xOk) console.log("[pushToBuffer] X scheduled:", xResult.data.createPost.post.id, "at", dueAt);
     else console.error("[pushToBuffer] X failed:", JSON.stringify(xResult));
     ok = ok || xOk;
   }
@@ -495,8 +496,9 @@ async function pushToBuffer(
       variables: {
         input: {
           channelId: BUFFER_IG_CHANNEL,
-          schedulingType: "scheduled",
-          scheduledAt,
+          schedulingType: "automatic",
+          mode: "customScheduled",
+          dueAt,
           text: instagramCaption,
           ...(igAssetsInput ? { assets: igAssetsInput } : {}),
           metadata: {
@@ -510,7 +512,7 @@ async function pushToBuffer(
     };
     const igResult = await bufferFetch(igBody);
     const igOk = !!igResult?.data?.createPost?.post?.id;
-    if (igOk) console.log("[pushToBuffer] IG scheduled:", igResult.data.createPost.post.id, `type=${igType}`, "at", scheduledAt);
+    if (igOk) console.log("[pushToBuffer] IG scheduled:", igResult.data.createPost.post.id, `type=${igType}`, "at", dueAt);
     else console.error("[pushToBuffer] IG failed:", JSON.stringify(igResult));
     ok = ok || igOk;
   }
