@@ -424,13 +424,11 @@ async function pushToBuffer(
   // ── X / Twitter: post as thread ──────────────────────────────────
   if (tweetThread.length > 0) {
     const [tweet1, ...rest] = tweetThread;
-    // Distribute: tweet1 gets photo[0], tweet2 gets photo[1], tweet3 gets photos[2,3]
-    const t1Assets = photoAssets(validPhotos.slice(0, 1));
+    // Distribute: 3 photos per tweet (tweet1→p0-2, tweet2→p3-5, tweet3→p6-8)
+    const t1Assets = photoAssets(validPhotos.slice(0, 3));
     const threadItems = rest.map((text, i) => {
-      const photoIdx = i + 1; // tweet2 → index 1, tweet3 → index 2
-      const photos = i === rest.length - 1
-        ? validPhotos.slice(photoIdx) // last tweet gets remaining photos
-        : validPhotos.slice(photoIdx, photoIdx + 1);
+      const start = (i + 1) * 3;
+      const photos = validPhotos.slice(start, start + 3);
       const assets = photoAssets(photos);
       return assets ? { text, assets } : { text };
     });
@@ -665,7 +663,7 @@ async function handleGenerate(limit = 3): Promise<{ generated: number; skipped: 
 
       // Download and upload to Supabase Storage for permanent hosting
       const photos: string[] = [];
-      for (let pi = 0; pi < Math.min(rawPhotoUrls.length, 4); pi++) {
+      for (let pi = 0; pi < Math.min(rawPhotoUrls.length, 9); pi++) {
         const photoUrl = rawPhotoUrls[pi];
         if (!photoUrl) continue;
         // Already in Supabase Storage — keep as-is
@@ -676,22 +674,24 @@ async function handleGenerate(limit = 3): Promise<{ generated: number; skipped: 
         try {
           const fetchResp = await fetch(photoUrl, { signal: AbortSignal.timeout(8000) });
           if (!fetchResp.ok) {
-            console.warn(`[generate] photo ${pi} fetch ${fetchResp.status} — keeping original URL`);
-            photos.push(photoUrl);
-            continue;
+            console.warn(`[generate] photo ${pi} fetch ${fetchResp.status} — skipping (expired URL)`);
+            continue; // skip — no fallback to expired URL
           }
           const buf = await fetchResp.arrayBuffer();
           const ct = fetchResp.headers.get("content-type") || "image/jpeg";
           const ext = ct.includes("png") ? "png" : "jpg";
           const hosted = await uploadPhotoToStorage(buf, `prop-${prop.id}-${pi}.${ext}`, ct);
-          photos.push(hosted || photoUrl);
-          if (hosted) console.log(`[generate] prop ${prop.id} photo ${pi} → Supabase Storage`);
+          if (hosted) {
+            photos.push(hosted);
+            console.log(`[generate] prop ${prop.id} photo ${pi} → Supabase Storage`);
+          } else {
+            console.warn(`[generate] prop ${prop.id} photo ${pi} upload failed — skipping`);
+          }
         } catch (e) {
-          console.warn(`[generate] prop ${prop.id} photo ${pi} error:`, e);
-          photos.push(photoUrl);
+          console.warn(`[generate] prop ${prop.id} photo ${pi} error — skipping:`, e);
         }
       }
-      if (photos.length === 0 && prop.lead_photo) photos.push(prop.lead_photo);
+      // No fallback to expired URLs — only confirmed Supabase Storage photos go to Buffer
 
       // Upsert social content — pass arrays directly as JSONB (no JSON.stringify)
       await supabase("social_contents", {
