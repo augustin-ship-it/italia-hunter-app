@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "crypto";
+// Anthropic imported via fetch to avoid bundling issues
 
 // ────────────────────────────────────────────
 // Supabase REST API config
@@ -37,7 +38,13 @@ async function supabase(
   const resp = await fetch(url, fetchOpts);
   if (resp.status === 204) return null;
   if (resp.status === 406 && opts.single) return null; // no rows found
-  const data = await resp.json();
+  // Handle responses that may have empty body (e.g. 201 with Prefer: return=minimal)
+  const text = await resp.text();
+  if (!text || text.trim() === "") {
+    if (resp.status >= 200 && resp.status < 300) return null;
+    throw new Error(`Supabase ${resp.status}: empty response`);
+  }
+  const data = JSON.parse(text);
   if (resp.status >= 400) {
     const msg = typeof data === "object" && data.message ? data.message : JSON.stringify(data);
     throw new Error(`Supabase ${resp.status}: ${msg}`);
@@ -160,6 +167,401 @@ const sortFieldMap: Record<string, string> = {
   airportScore: "airport_score",
   createdAt: "created_at",
 };
+
+// ────────────────────────────────────────────
+// Real Estate Porn Scorer
+// ────────────────────────────────────────────
+const POOL_KEYWORDS = /\b(pool|piscine|zwembad|pisci|schwimmbad)\b/i;
+const SEA_KEYWORDS = /\b(sea view|vue mer|vista mare|vista al mar|ocean view|seaview|seafront)\b/i;
+const EXTERIOR_KEYWORDS = /\b(garden|jardin|giardino|terrace|terrasse|terrazza|outdoor|park|orchard)\b/i;
+const CHARACTER_TYPES = /\b(castle|château|castello|masseria|trullo|villa|manor|palazzo|farmhouse|casale|tower|torre)\b/i;
+const PREMIUM_REGIONS = /^(toscana|sicilia|sardegna|puglia|liguria|umbria|abruzzo)$/i;
+
+function computeRealEstatePornScore(p: {
+  title?: string; description?: string; price?: number; size?: number | null;
+  photos_count?: number; region?: string; distance_to_sea_km?: number | null;
+  property_type?: string;
+}): number {
+  const text = `${p.title || ""} ${p.description || ""} ${p.property_type || ""}`.toLowerCase();
+  let score = 0;
+  if (POOL_KEYWORDS.test(text)) score += 25;
+  if (SEA_KEYWORDS.test(text) || (p.distance_to_sea_km != null && p.distance_to_sea_km < 3)) score += 20;
+  if (p.photos_count != null) {
+    if (p.photos_count >= 20) score += 15;
+    else if (p.photos_count >= 10) score += 10;
+    else if (p.photos_count >= 5) score += 5;
+  }
+  if (p.price != null) {
+    if (p.price >= 500_000 && p.price <= 3_000_000) score += 15;
+    else if (p.price >= 200_000) score += 8;
+  }
+  if (EXTERIOR_KEYWORDS.test(text)) score += 10;
+  if (p.region && PREMIUM_REGIONS.test(p.region)) score += 10;
+  if (p.size != null && p.size >= 300) score += 5;
+  if (CHARACTER_TYPES.test(text)) score += 5;
+  return Math.min(Math.round(score), 100);
+}
+
+// ────────────────────────────────────────────
+// Tweet / IG generator (Claude Haiku)
+// ────────────────────────────────────────────
+const TWEET_SYSTEM = `You are the voice behind @TheItalianExit on X (Twitter). You write punchy, smart, slightly contrarian tweets about Italian real estate.
+
+Target audience: HNWI, remote workers, early retirees, global expats looking for arbitrage.
+
+Your persona: insider who knows Italian real estate AND global finance. You've seen London, Paris, Dubai prices. You think Western cities are overpriced. You talk hard numbers, not dreams.
+
+TONE:
+- Short punchy sentences. SMS to a smart friend.
+- Specific numbers: exact prices, sqm, distance, price-per-sqm
+- Contrarian: Italy is the most underrated market in Europe
+- No cheerleading. No selling. Just facts that speak.
+
+HARD RULES:
+- NO em-dashes (—) ever
+- NO "nestled", "boasts", "landscape", "navigate", "leverage", "stunning", "breathtaking", "charming"
+- NO exclamation marks
+- NO hashtags
+- NO internal commentary or meta-text (write the tweet, nothing else)
+- Phrases average under 20 words
+- Max 280 characters per tweet
+- Minimal emojis (one house or flag per thread maximum)
+
+THREAD FORMAT (when asked for a thread):
+- Tweet 1: the hook. One killer visual fact. Short. Punchy. Ends with 🧵 symbol. NO URL here.
+- Tweet 2: the numbers. Price breakdown, comparable city data, pure arbitrage math. NO URL here.
+- Tweet 3: closing angle (lifestyle / scarcity / business case) + URL at end.
+
+Output format for threads: exactly 3 tweet texts separated by the literal string "---TWEET---"
+Output format for single tweet: just the tweet text, nothing else
+DO NOT write any explanation, label, or reasoning. Just the content.`;
+
+function formatPrice(price: number): string {
+  if (price >= 1_000_000) return `€${(price / 1_000_000).toFixed(1)}M`;
+  if (price >= 1_000) return `€${Math.round(price / 1_000)}K`;
+  return `€${price}`;
+}
+
+function formatRegion(region: string): string {
+  const map: Record<string, string> = {
+    toscana: "Tuscany", puglia: "Puglia", sicilia: "Sicily", sardegna: "Sardinia",
+    campania: "Campania", umbria: "Umbria", liguria: "Liguria", piemonte: "Piedmont",
+    veneto: "Veneto", lombardia: "Lombardy", calabria: "Calabria", abruzzo: "Abruzzo",
+    marche: "Le Marche", lazio: "Lazio", "emilia-romagna": "Emilia-Romagna",
+  };
+  return map[region.toLowerCase()] || region;
+}
+
+function enforceCharLimit(tweet: string, limit = 280): string {
+  if (tweet.length <= limit) return tweet;
+  const urlMatch = tweet.match(/https?:\/\/\S+/);
+  if (urlMatch) {
+    const url = urlMatch[0];
+    const textPart = tweet.slice(0, tweet.indexOf(url)).trimEnd();
+    const maxText = limit - url.length - 1;
+    return `${textPart.slice(0, maxText).trimEnd()}\n${url}`;
+  }
+  return tweet.slice(0, limit - 3) + "...";
+}
+
+async function claudeMessage(system: string, userPrompt: string, maxTokens: number): Promise<string> {
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": process.env.ANTHROPIC_API_KEY || "",
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role: "user", content: userPrompt }],
+    }),
+  });
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error(`Anthropic API ${resp.status}: ${txt.slice(0, 200)}`);
+  }
+  const data = await resp.json();
+  return data.content[0].text.trim();
+}
+
+async function generateTweetContent(prop: any): Promise<{
+  tweetThread: string[]; instagramCaption: string; instagramFirstComment: string;
+}> {
+  const pricePerSqm = prop.price_per_sqm ? Math.round(prop.price_per_sqm)
+    : prop.size ? Math.round(prop.price / prop.size) : null;
+
+  const context = [
+    `Type: ${prop.property_type || "property"}`,
+    `Location: ${prop.town}, ${prop.province}, ${formatRegion(prop.region)}`,
+    `Price: ${formatPrice(prop.price)}${pricePerSqm ? ` (€${pricePerSqm}/sqm)` : ""}`,
+    prop.size ? `Size: ${prop.size}m²` : null,
+    prop.rooms ? `Bedrooms: ${prop.rooms}` : null,
+    prop.bathrooms ? `Bathrooms: ${prop.bathrooms}` : null,
+    prop.distance_to_sea_km ? `Sea: ${prop.distance_to_sea_km}km from coast` : null,
+    prop.nearest_airport ? `Airport: ${prop.airport_distance_km}km to ${prop.nearest_airport}` : null,
+    `URL: ${prop.url}`,
+    `Description: ${(prop.description || "").slice(0, 1000)}`,
+  ].filter(Boolean).join("\n");
+
+  const isThread = (prop.photos_count ?? 0) >= 2;
+  const twitterPrompt = isThread
+    ? `Write a 3-tweet thread for this Italian property. Format: 3 blocks separated by "---TWEET---". No labels.\n- Tweet 1: hook + one killer fact, end with 🧵 (no URL)\n- Tweet 2: pure numbers/arbitrage math (no URL)\n- Tweet 3: lifestyle closer + URL\n- Each tweet max 280 chars\n\n${context}`
+    : `Write a single tweet for this Italian property. Include the URL at the end. Max 280 chars.\n\n${context}`;
+
+  const twitterRaw = await claudeMessage(TWEET_SYSTEM, twitterPrompt, 500);
+
+  let tweetThread: string[];
+  if (isThread) {
+    const parts = twitterRaw
+      .split(/---\s*TWEET\s*---|\*\*Tweet\s*\d+\*\*:|Tweet\s*\d+:|^\d+\.\s/m)
+      .map((s: string) => s.trim()).filter((s: string) => s.length > 20);
+
+    let t1 = enforceCharLimit(parts[0] || twitterRaw.slice(0, 280));
+    let t2 = parts[1] ? enforceCharLimit(parts[1]) : undefined;
+    let t3 = parts[2] ? enforceCharLimit(parts[2]) : undefined;
+
+    if (!t2 && twitterRaw.includes("\n\n")) {
+      const byNewline = twitterRaw.split(/\n\n+/).map((s: string) => s.trim()).filter((s: string) => s.length > 20);
+      if (byNewline.length >= 2) {
+        t1 = enforceCharLimit(byNewline[0]);
+        t2 = byNewline[1] ? enforceCharLimit(byNewline[1]) : undefined;
+        t3 = byNewline[2] ? enforceCharLimit(byNewline[2]) : undefined;
+      }
+    }
+    tweetThread = [t1, ...(t2 ? [t2] : []), ...(t3 ? [t3] : [])];
+  } else {
+    tweetThread = [enforceCharLimit(twitterRaw)];
+  }
+
+  // Instagram caption
+  const instagramCaption = await claudeMessage(
+    `You write Instagram captions for @TheItalianExit. Same voice — punchy, factual, no fluff. Instagram allows 5-7 short lines. No hashtags in caption. No exclamation marks. No em-dashes. End with the URL.`,
+    `Write Instagram caption for:\n${context}`,
+    400
+  );
+
+  // Hashtags
+  const region = formatRegion(prop.region);
+  const regionTag = `#${region.replace(/\s+/g, "")}`;
+  const typeTag = prop.property_type ? `#${prop.property_type.replace(/[^a-zA-Z]/g, "")}` : null;
+  const baseTags = ["#ItalianProperty", "#ItaliaRealEstate", "#ItalyLife", "#ItalianDream", "#ExpatsInItaly", "#RemoteWork", "#PropertyAbroad", "#RealEstatePorn", "#ItalyRealEstate", "#LuxuryRealEstate", "#ItalianVilla", "#MoveToItaly"];
+  const allTags = [regionTag, ...(typeTag ? [typeTag] : []), ...baseTags].slice(0, 15);
+  const instagramFirstComment = allTags.join(" ");
+
+  return { tweetThread, instagramCaption, instagramFirstComment };
+}
+
+// ────────────────────────────────────────────
+// Buffer publisher
+// ────────────────────────────────────────────
+async function pushToBuffer(prop: any, tweetThread: string[], photos: string[]): Promise<boolean> {
+  const BUFFER_TOKEN = process.env.BUFFER_TOKEN;
+  const BUFFER_X_CHANNEL = process.env.BUFFER_X_CHANNEL;
+  if (!BUFFER_TOKEN || !BUFFER_X_CHANNEL) return false;
+
+  // GraphQL mutation to create a posting
+  const mutation = `
+    mutation CreateIdea($input: IdeaCreateInput!) {
+      ideaCreate(input: $input) {
+        idea { id }
+      }
+    }
+  `;
+
+  const text = tweetThread.join("\n\n");
+  const body = {
+    query: mutation,
+    variables: {
+      input: {
+        text,
+        channelIds: [BUFFER_X_CHANNEL],
+        mediaUrls: photos.slice(0, 4),
+      },
+    },
+  };
+
+  const resp = await fetch("https://api.bufferapp.com/graphql", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${BUFFER_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  return resp.ok;
+}
+
+// ────────────────────────────────────────────
+// New v2 route handlers
+// ────────────────────────────────────────────
+
+async function handleGetReview() {
+  // Top 20 pending_review properties by porn score, with social content
+  const rows = await supabase("properties", {
+    query: "select=*,social_contents(*)&status=eq.pending_review&order=real_estate_porn_score.desc&limit=20",
+  });
+
+  return (rows || []).map((row: any) => {
+    const social = row.social_contents && row.social_contents.length > 0 ? row.social_contents[0] : null;
+    return {
+      ...rowToProperty(row),
+      realEstatePornScore: row.real_estate_porn_score ?? 0,
+      reviewFlaggedAt: row.review_flagged_at,
+      socialContent: social ? {
+        id: social.id,
+        tweetThread: social.tweet_thread,
+        instagramCaption: social.instagram_caption,
+        instagramFirstComment: social.instagram_first_comment,
+        twitterPhotos: social.twitter_photos,
+      } : null,
+    };
+  });
+}
+
+async function handleAcceptProperty(id: number): Promise<{ ok: boolean; error?: string }> {
+  const now = new Date().toISOString();
+
+  // Get property + social content
+  const prop = await supabase("properties", { query: `select=*&id=eq.${id}`, single: true });
+  if (!prop) return { ok: false, error: "Property not found" };
+
+  const socialRows = await supabase("social_contents", { query: `select=*&property_id=eq.${id}` });
+  const social = socialRows && socialRows.length > 0 ? socialRows[0] : null;
+
+  if (social) {
+    const thread: string[] = social.tweet_thread || [];
+    const photos: string[] = social.twitter_photos || (prop.lead_photo ? [prop.lead_photo] : []);
+    await pushToBuffer(prop, thread, photos);
+  }
+
+  // Mark as posted
+  await supabase("properties", {
+    method: "PATCH",
+    query: `id=eq.${id}`,
+    body: { status: "posted", updated_at: now },
+    prefer: "return=minimal",
+  });
+
+  return { ok: true };
+}
+
+async function handleRejectProperty(id: number): Promise<{ ok: boolean }> {
+  await supabase("properties", {
+    method: "PATCH",
+    query: `id=eq.${id}`,
+    body: { status: "rejected", updated_at: new Date().toISOString() },
+    prefer: "return=minimal",
+  });
+  return { ok: true };
+}
+
+async function handleEditTweet(id: number, tweetIndex: number, text: string): Promise<{ ok: boolean }> {
+  const socialRows = await supabase("social_contents", { query: `select=*&property_id=eq.${id}` });
+  if (!socialRows || socialRows.length === 0) return { ok: false };
+
+  const social = socialRows[0];
+  const thread: string[] = social.tweet_thread || [];
+  thread[tweetIndex] = text;
+
+  await supabase("social_contents", {
+    method: "PATCH",
+    query: `property_id=eq.${id}`,
+    body: { tweet_thread: thread },
+    prefer: "return=minimal",
+  });
+  return { ok: true };
+}
+
+async function handleGenerate(limit = 3): Promise<{ generated: number; skipped: number }> {
+  // Get top qualifying properties (not yet pending_review/posted/rejected) by porn score
+  const rows = await supabase("properties", {
+    query: `select=*&status=eq.qualified&real_estate_porn_score=gte.35&order=real_estate_porn_score.desc&limit=${limit}`,
+  });
+
+  if (!rows || rows.length === 0) {
+    // Score and find top ones
+    const allQualified = await supabase("properties", {
+      query: "select=*&status=eq.qualified&order=created_at.desc&limit=50",
+    });
+    if (!allQualified || allQualified.length === 0) return { generated: 0, skipped: 0 };
+
+    // Compute scores and update them
+    for (const prop of allQualified) {
+      const score = computeRealEstatePornScore({
+        title: prop.title, description: prop.description, price: prop.price,
+        size: prop.size, photos_count: prop.photos_count, region: prop.region,
+        distance_to_sea_km: prop.distance_to_sea_km, property_type: prop.property_type,
+      });
+      await supabase("properties", {
+        method: "PATCH",
+        query: `id=eq.${prop.id}`,
+        body: { real_estate_porn_score: score, updated_at: new Date().toISOString() },
+        prefer: "return=minimal",
+      });
+    }
+  }
+
+  // Get IDs that already have social_contents to exclude them
+  const existingSocial = await supabase("social_contents", { query: "select=property_id" });
+  const existingIds = new Set((existingSocial || []).map((r: any) => r.property_id));
+
+  // Re-fetch after scoring — get more than needed so we can filter
+  const candidates = await supabase("properties", {
+    query: `select=*&status=eq.qualified&real_estate_porn_score=gte.1&order=real_estate_porn_score.desc&limit=${limit * 10}`,
+  });
+  const toGenerate = (candidates || []).filter((r: any) => !existingIds.has(r.id)).slice(0, limit);
+  if (!toGenerate || toGenerate.length === 0) return { generated: 0, skipped: 0 };
+
+  const now = new Date().toISOString();
+  let generated = 0, skipped = 0;
+
+  for (const prop of toGenerate) {
+    try {
+      const { tweetThread, instagramCaption, instagramFirstComment } = await generateTweetContent(prop);
+      const photos: string[] = prop.lead_photo ? [prop.lead_photo] : [];
+
+      // Upsert social content — pass arrays directly as JSONB (no JSON.stringify)
+      await supabase("social_contents", {
+        method: "POST",
+        body: {
+          property_id: prop.id,
+          tweet_thread: tweetThread,
+          twitter_post: tweetThread[0],
+          instagram_caption: instagramCaption,
+          instagram_first_comment: instagramFirstComment,
+          twitter_photos: photos,
+          instagram_status: "pending",
+          twitter_status: "pending",
+          reel_status: "pending",
+          generated_at: now,
+        },
+        prefer: "return=minimal,resolution=merge-duplicates",
+      });
+
+      // Mark as pending_review
+      await supabase("properties", {
+        method: "PATCH",
+        query: `id=eq.${prop.id}`,
+        body: { status: "pending_review", review_flagged_at: now, updated_at: now },
+        prefer: "return=minimal",
+      });
+
+      generated++;
+    } catch (e: any) {
+      console.error(`[generate] Failed for property ${prop.id}: ${e?.message || e}`);
+      skipped++;
+      // Surface first error in response for debugging
+      if (generated === 0 && skipped === 1) {
+        return { generated: 0, skipped: toGenerate.length, error: e?.message || String(e) } as any;
+      }
+    }
+  }
+
+  return { generated, skipped };
+}
 
 // ────────────────────────────────────────────
 // Route handlers
@@ -322,7 +724,9 @@ async function handleImportProperties(items: any[]) {
     const existing = await supabase("properties", {
       query: `select=id,status&external_id=eq.${encodeURIComponent(item.id)}`,
     });
-    const photosJson = item.photos ? JSON.stringify(item.photos) : null;
+    // Pass photos array directly — Supabase REST handles JSONB natively.
+    // Do NOT JSON.stringify here: that would double-serialize and lose the array structure.
+    const photosArr = item.photos ?? null;
     const now = new Date().toISOString();
 
     if (existing && existing.length > 0) {
@@ -344,7 +748,7 @@ async function handleImportProperties(items: any[]) {
           longitude: item.longitude ?? null,
           url: item.url,
           lead_photo: item.lead_photo ?? null,
-          photos: photosJson,
+          photos: photosArr,
           photos_count: item.photos_count ?? 0,
           raw_type: item.raw_type,
           property_type: item.property_type,
@@ -384,7 +788,7 @@ async function handleImportProperties(items: any[]) {
           longitude: item.longitude ?? null,
           url: item.url,
           lead_photo: item.lead_photo ?? null,
-          photos: photosJson,
+          photos: photosArr,
           photos_count: item.photos_count ?? 0,
           raw_type: item.raw_type,
           property_type: item.property_type,
@@ -842,6 +1246,66 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       } else {
         return res.status(502).json({ message: result?.message || "Unknown Buffer error" });
       }
+    }
+
+    // ── GET /api/review
+    if (apiPath === "/review" && method === "GET") {
+      const result = await handleGetReview();
+      return res.status(200).json(result);
+    }
+
+    // ── POST /api/review/:id/accept
+    const reviewAcceptMatch = apiPath.match(/^\/review\/(\d+)\/accept$/);
+    if (reviewAcceptMatch && method === "POST") {
+      const result = await handleAcceptProperty(Number(reviewAcceptMatch[1]));
+      return res.status(result.ok ? 200 : 404).json(result);
+    }
+
+    // ── POST /api/review/:id/reject
+    const reviewRejectMatch = apiPath.match(/^\/review\/(\d+)\/reject$/);
+    if (reviewRejectMatch && method === "POST") {
+      const result = await handleRejectProperty(Number(reviewRejectMatch[1]));
+      return res.status(200).json(result);
+    }
+
+    // ── PATCH /api/review/:id/tweet
+    const reviewTweetMatch = apiPath.match(/^\/review\/(\d+)\/tweet$/);
+    if (reviewTweetMatch && method === "PATCH") {
+      const { tweetIndex, text } = req.body;
+      const result = await handleEditTweet(Number(reviewTweetMatch[1]), tweetIndex ?? 0, text ?? "");
+      return res.status(200).json(result);
+    }
+
+    // ── POST /api/generate
+    if (apiPath === "/generate" && method === "POST") {
+      const { limit } = req.body || {};
+      const result = await handleGenerate(limit ?? 10);
+      return res.status(200).json(result);
+    }
+
+    // ── GET /api/cron/autopilot
+    if (apiPath === "/cron/autopilot" && method === "GET") {
+      // Auto-approve pending_review properties older than 48h (max 5)
+      const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+      const stale = await supabase("properties", {
+        query: `select=id&status=eq.pending_review&review_flagged_at=lt.${cutoff}&order=real_estate_porn_score.desc&limit=5`,
+      });
+      let autoApproved = 0;
+      for (const row of stale || []) {
+        const r = await handleAcceptProperty(row.id);
+        if (r.ok) autoApproved++;
+      }
+      // Trigger generation to keep queue full
+      const pendingCount = await supabase("properties", {
+        query: "select=id&status=eq.pending_review",
+      });
+      const queueSize = (pendingCount || []).length;
+      let generated = 0;
+      if (queueSize < 5) {
+        const gen = await handleGenerate(10 - queueSize);
+        generated = gen.generated;
+      }
+      return res.status(200).json({ autoApproved, queueSize, generated });
     }
 
     return res.status(404).json({ message: `Route not found: ${method} /api${apiPath}` });
