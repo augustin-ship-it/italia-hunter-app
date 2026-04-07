@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 // Property status enum — pipeline stages
-export const propertyStatusEnum = z.enum(["qualified", "selected", "rejected", "emailed", "content_ready", "posted"]);
+export const propertyStatusEnum = z.enum(["qualified", "selected", "rejected", "emailed", "content_ready", "posted", "pending_review"]);
 export type PropertyStatus = z.infer<typeof propertyStatusEnum>;
 
 // Content approval status per platform
@@ -46,6 +46,8 @@ export const propertySchema = z.object({
   airportDistanceKm: z.number().nullable(),
   distanceToSeaKm: z.number().nullable(),
   status: propertyStatusEnum.default("qualified"),
+  realEstatePornScore: z.number().default(0),
+  reviewFlaggedAt: z.string().nullable().optional(),
   batchDate: z.string(),
   createdAt: z.string(),
 });
@@ -59,9 +61,11 @@ export const socialContentSchema = z.object({
   instagramCaption: z.string().nullable(),
   instagramFirstComment: z.string().nullable(),
   twitterPost: z.string().nullable(),
+  tweetThread: z.array(z.string()).nullable().optional(), // full thread (tweet1, tweet2, tweet3)
   reelScript: z.string().nullable(),
   summary: z.string().nullable(),
   carouselPhotos: z.array(z.string()).nullable(),
+  twitterPhotos: z.array(z.string()).nullable().optional(),
   instagramStatus: contentApprovalEnum.default("pending"),
   twitterStatus: contentApprovalEnum.default("pending"),
   reelStatus: contentApprovalEnum.default("pending"),

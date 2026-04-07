@@ -302,14 +302,13 @@ async function generateTweetContent(prop: any): Promise<{
     prop.bathrooms ? `Bathrooms: ${prop.bathrooms}` : null,
     prop.distance_to_sea_km ? `Sea: ${prop.distance_to_sea_km}km from coast` : null,
     prop.nearest_airport ? `Airport: ${prop.airport_distance_km}km to ${prop.nearest_airport}` : null,
-    `URL: ${prop.url}`,
     `Description: ${(prop.description || "").slice(0, 1000)}`,
   ].filter(Boolean).join("\n");
 
   const isThread = (prop.photos_count ?? 0) >= 2;
   const twitterPrompt = isThread
-    ? `Write a 3-tweet thread for this Italian property. Format: 3 blocks separated by "---TWEET---". No labels.\n- Tweet 1: hook + one killer fact, end with 🧵 (no URL)\n- Tweet 2: pure numbers/arbitrage math (no URL)\n- Tweet 3: lifestyle closer + URL\n- Each tweet max 280 chars\n\n${context}`
-    : `Write a single tweet for this Italian property. Include the URL at the end. Max 280 chars.\n\n${context}`;
+    ? `Write a 3-tweet thread for this Italian property. Format: 3 blocks separated by "---TWEET---". No labels.\n- Tweet 1: hook + one killer fact, end with 🧵\n- Tweet 2: pure numbers/arbitrage math\n- Tweet 3: lifestyle closer — NO URL, no links\n- Each tweet max 280 chars. NEVER include any URLs or links.\n\n${context}`
+    : `Write a single tweet for this Italian property. Max 280 chars. NO URL, no links.\n\n${context}`;
 
   const twitterRaw = await claudeMessage(TWEET_SYSTEM, twitterPrompt, 500);
 
@@ -357,41 +356,127 @@ async function generateTweetContent(prop: any): Promise<{
 // ────────────────────────────────────────────
 // Buffer publisher
 // ────────────────────────────────────────────
-async function pushToBuffer(prop: any, tweetThread: string[], photos: string[]): Promise<boolean> {
-  const BUFFER_TOKEN = process.env.BUFFER_TOKEN;
-  const BUFFER_X_CHANNEL = process.env.BUFFER_X_CHANNEL;
-  if (!BUFFER_TOKEN || !BUFFER_X_CHANNEL) return false;
+// Upload an already-downloaded photo buffer to Supabase Storage.
+// Returns the public Supabase URL, or null on failure.
+async function uploadPhotoToStorage(data: ArrayBuffer, filename: string, contentType = "image/jpeg"): Promise<string | null> {
+  const SUPABASE_URL = process.env.SUPABASE_URL || "https://ddvdkavznseinkgmfeiy.supabase.co";
+  const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdmRrYXZ6bnNlaW5rZ21mZWl5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzMzgyMDUsImV4cCI6MjA4ODkxNDIwNX0.jw1AugJ55FQIUOvw59q4MufEIm6qIs6d83s7fN4YNvs";
+  try {
+    const uploadResp = await fetch(`${SUPABASE_URL}/storage/v1/object/photos/${filename}`, {
+      method: "POST",
+      headers: {
+        "apikey": SUPABASE_KEY,
+        "Authorization": `Bearer ${SUPABASE_KEY}`,
+        "Content-Type": contentType,
+        "x-upsert": "true",
+      },
+      body: data,
+    });
+    if (uploadResp.ok) return `${SUPABASE_URL}/storage/v1/object/public/photos/${filename}`;
+    console.error("[uploadPhoto] failed:", await uploadResp.text());
+  } catch (e: any) {
+    console.error("[uploadPhoto] error:", e?.message);
+  }
+  return null;
+}
 
-  // GraphQL mutation to create a posting
+// Push to Buffer: post to X (thread) and Instagram queue
+async function pushToBuffer(
+  prop: any,
+  tweetThread: string[],
+  instagramCaption: string,
+  instagramFirstComment: string,
+  hostedPhotos: string[]
+): Promise<boolean> {
+  const BUFFER_TOKEN = process.env.BUFFER_TOKEN;
+  const BUFFER_X_CHANNEL = process.env.BUFFER_X_CHANNEL || "69b337177be9f8b1714da5e4";
+  const BUFFER_IG_CHANNEL = process.env.BUFFER_IG_CHANNEL || "69b336d87be9f8b1714da537";
+  if (!BUFFER_TOKEN) return false;
+
+  const bufferFetch = async (input: any) => {
+    const resp = await fetch("https://api.buffer.com/graphql", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${BUFFER_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    return resp.json().catch(() => null);
+  };
+
   const mutation = `
-    mutation CreateIdea($input: IdeaCreateInput!) {
-      ideaCreate(input: $input) {
-        idea { id }
+    mutation CreatePost($input: CreatePostInput!) {
+      createPost(input: $input) {
+        ... on PostActionSuccess { post { id status } }
+        ... on MutationError { message }
       }
     }
   `;
 
-  const text = tweetThread.join("\n\n");
-  const body = {
-    query: mutation,
-    variables: {
-      input: {
-        text,
-        channelIds: [BUFFER_X_CHANNEL],
-        mediaUrls: photos.slice(0, 4),
-      },
-    },
-  };
+  const imageAssets = hostedPhotos.slice(0, 4)
+    .filter(u => u && u.startsWith("http"))
+    .map(url => ({ url }));
+  const assetsInput = imageAssets.length > 0 ? { images: imageAssets } : undefined;
 
-  const resp = await fetch("https://api.bufferapp.com/graphql", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${BUFFER_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-  return resp.ok;
+  let ok = false;
+
+  // ── X / Twitter: post as thread ──────────────────────────────────
+  if (tweetThread.length > 0) {
+    const [tweet1, ...rest] = tweetThread;
+    const xBody = {
+      query: mutation,
+      variables: {
+        input: {
+          channelId: BUFFER_X_CHANNEL,
+          schedulingType: "automatic",
+          mode: "addToQueue",
+          text: tweet1,
+          ...(assetsInput ? { assets: assetsInput } : {}),
+          ...(rest.length > 0 ? {
+            metadata: {
+              twitter: {
+                thread: rest.map(t => ({ text: t })),
+              },
+            },
+          } : {}),
+        },
+      },
+    };
+    const xResult = await bufferFetch(xBody);
+    const xOk = !!xResult?.data?.createPost?.post?.id;
+    if (xOk) console.log("[pushToBuffer] X post queued:", xResult.data.createPost.post.id);
+    else console.error("[pushToBuffer] X failed:", JSON.stringify(xResult));
+    ok = ok || xOk;
+  }
+
+  // ── Instagram: single post ────────────────────────────────────────
+  if (instagramCaption) {
+    const igBody = {
+      query: mutation,
+      variables: {
+        input: {
+          channelId: BUFFER_IG_CHANNEL,
+          schedulingType: "automatic",
+          mode: "addToQueue",
+          text: instagramCaption,
+          ...(assetsInput ? { assets: assetsInput } : {}),
+          ...(instagramFirstComment ? {
+            metadata: {
+              instagram: {
+                firstComment: instagramFirstComment,
+                type: "post",
+              },
+            },
+          } : {}),
+        },
+      },
+    };
+    const igResult = await bufferFetch(igBody);
+    const igOk = !!igResult?.data?.createPost?.post?.id;
+    if (igOk) console.log("[pushToBuffer] IG post queued:", igResult.data.createPost.post.id);
+    else console.error("[pushToBuffer] IG failed:", JSON.stringify(igResult));
+    ok = ok || igOk;
+  }
+
+  return ok;
 }
 
 // ────────────────────────────────────────────
@@ -405,7 +490,10 @@ async function handleGetReview() {
   });
 
   return (rows || []).map((row: any) => {
-    const social = row.social_contents && row.social_contents.length > 0 ? row.social_contents[0] : null;
+    // PostgREST returns object (not array) for one-to-one FK (unique constraint on property_id)
+    const social = row.social_contents && !Array.isArray(row.social_contents)
+      ? row.social_contents
+      : (Array.isArray(row.social_contents) && row.social_contents.length > 0 ? row.social_contents[0] : null);
     return {
       ...rowToProperty(row),
       realEstatePornScore: row.real_estate_porn_score ?? 0,
@@ -433,8 +521,42 @@ async function handleAcceptProperty(id: number): Promise<{ ok: boolean; error?: 
 
   if (social) {
     const thread: string[] = social.tweet_thread || [];
-    const photos: string[] = social.twitter_photos || (prop.lead_photo ? [prop.lead_photo] : []);
-    await pushToBuffer(prop, thread, photos);
+    const igCaption: string = social.instagram_caption || "";
+    const igFirstComment: string = social.instagram_first_comment || "";
+    const rawPhotos: string[] = social.twitter_photos || (prop.lead_photo ? [prop.lead_photo] : []);
+
+    // Gather hosted photos for Buffer
+    // If already in Supabase Storage (from generate phase) — use directly
+    // If still an Apify-signed URL — try download+upload as fallback
+    const hostedPhotos: string[] = [];
+    for (let i = 0; i < Math.min(rawPhotos.length, 4); i++) {
+      const photoUrl = rawPhotos[i];
+      if (!photoUrl) continue;
+      // Already in Supabase Storage — permanent URL, use directly
+      if (photoUrl.includes("supabase.co/storage")) {
+        hostedPhotos.push(photoUrl);
+        continue;
+      }
+      // Apify-signed URL — try to download and upload to Supabase Storage
+      if (photoUrl.includes("/s/v1/")) {
+        try {
+          const filename = `prop-${id}-${i}.jpg`;
+          const resp = await fetch(photoUrl, { signal: AbortSignal.timeout(10000) });
+          if (!resp.ok) { console.warn(`[accept] photo ${i} fetch failed: ${resp.status}`); continue; }
+          const data = await resp.arrayBuffer();
+          const ct = resp.headers.get("content-type") || "image/jpeg";
+          const hosted = await uploadPhotoToStorage(data, filename, ct);
+          if (hosted) { hostedPhotos.push(hosted); console.log(`[accept] photo ${i} hosted`); }
+        } catch (e) {
+          console.warn(`[accept] photo ${i} error:`, e);
+        }
+        continue;
+      }
+      console.log(`[accept] skipping unknown URL type for photo ${i}`);
+    }
+    console.log(`[accept] ${hostedPhotos.length}/${rawPhotos.length} photos hosted`);
+
+    await pushToBuffer(prop, thread, igCaption, igFirstComment, hostedPhotos);
   }
 
   // Mark as posted
@@ -521,7 +643,46 @@ async function handleGenerate(limit = 3): Promise<{ generated: number; skipped: 
   for (const prop of toGenerate) {
     try {
       const { tweetThread, instagramCaption, instagramFirstComment } = await generateTweetContent(prop);
-      const photos: string[] = prop.lead_photo ? [prop.lead_photo] : [];
+
+      // Collect photos from lead_photo + photos array (deduplicated, up to 4)
+      const rawPhotoUrls: string[] = [];
+      if (prop.lead_photo) rawPhotoUrls.push(prop.lead_photo);
+      const propPhotos = Array.isArray(prop.photos)
+        ? prop.photos
+        : (typeof prop.photos === "string" ? (() => { try { return JSON.parse(prop.photos); } catch { return []; } })() : []);
+      for (const p of propPhotos) {
+        if (p && !rawPhotoUrls.includes(p)) rawPhotoUrls.push(p);
+      }
+
+      // Download and upload to Supabase Storage for permanent hosting
+      const photos: string[] = [];
+      for (let pi = 0; pi < Math.min(rawPhotoUrls.length, 4); pi++) {
+        const photoUrl = rawPhotoUrls[pi];
+        if (!photoUrl) continue;
+        // Already in Supabase Storage — keep as-is
+        if (photoUrl.includes("supabase.co/storage")) {
+          photos.push(photoUrl);
+          continue;
+        }
+        try {
+          const fetchResp = await fetch(photoUrl, { signal: AbortSignal.timeout(8000) });
+          if (!fetchResp.ok) {
+            console.warn(`[generate] photo ${pi} fetch ${fetchResp.status} — keeping original URL`);
+            photos.push(photoUrl);
+            continue;
+          }
+          const buf = await fetchResp.arrayBuffer();
+          const ct = fetchResp.headers.get("content-type") || "image/jpeg";
+          const ext = ct.includes("png") ? "png" : "jpg";
+          const hosted = await uploadPhotoToStorage(buf, `prop-${prop.id}-${pi}.${ext}`, ct);
+          photos.push(hosted || photoUrl);
+          if (hosted) console.log(`[generate] prop ${prop.id} photo ${pi} → Supabase Storage`);
+        } catch (e) {
+          console.warn(`[generate] prop ${prop.id} photo ${pi} error:`, e);
+          photos.push(photoUrl);
+        }
+      }
+      if (photos.length === 0 && prop.lead_photo) photos.push(prop.lead_photo);
 
       // Upsert social content — pass arrays directly as JSONB (no JSON.stringify)
       await supabase("social_contents", {
@@ -853,6 +1014,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(401).json({ valid: false });
     }
 
+    // ── GET /api/proxy/image — public, no auth needed (serves proxied Idealista images)
+    if (apiPath === "/proxy/image" && method === "GET") {
+      const imgUrl = req.query?.url as string;
+      if (!imgUrl || !(imgUrl.startsWith("https://img") || imgUrl.startsWith("https://img4.idealista"))) {
+        return res.status(400).end();
+      }
+      try {
+        const imgResp = await fetch(imgUrl, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://www.idealista.it/",
+            "Accept": "image/webp,image/avif,image/*,*/*;q=0.8",
+          },
+        });
+        if (!imgResp.ok) return res.status(502).end();
+        const contentType = imgResp.headers.get("content-type") || "image/webp";
+        res.setHeader("Content-Type", contentType);
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        const buf = await imgResp.arrayBuffer();
+        return res.status(200).end(Buffer.from(buf));
+      } catch {
+        return res.status(502).end();
+      }
+    }
+
     // ── Auth middleware: all other routes require valid token or API key
     const authHeader = req.headers.authorization || "";
     const apiKey = (req.headers["x-api-key"] as string) || "";
@@ -902,6 +1089,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const items = req.body;
       if (!Array.isArray(items)) return res.status(400).json({ message: "Body must be an array" });
       const result = await handleImportProperties(items);
+      // Auto-generate content immediately while Apify photo URLs are fresh
+      // Run in background (don't await) to avoid blocking the import response
+      if (result.imported > 0) {
+        handleGenerate(Math.min(result.imported, 5)).catch((e) =>
+          console.error("[import] auto-generate failed:", e?.message || e)
+        );
+      }
       return res.status(200).json(result);
     }
 
@@ -1248,6 +1442,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
+    // ── GET /api/proxy/image?url=... (proxy Idealista images to bypass hotlink protection)
+    if (apiPath === "/proxy/image" && method === "GET") {
+      const imgUrl = req.query?.url as string;
+      if (!imgUrl || !imgUrl.startsWith("https://img")) {
+        return res.status(400).json({ message: "Invalid URL" });
+      }
+      try {
+        const imgResp = await fetch(imgUrl, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://www.idealista.it/",
+            "Accept": "image/webp,image/avif,image/*,*/*;q=0.8",
+          },
+        });
+        if (!imgResp.ok) return res.status(502).end();
+        const contentType = imgResp.headers.get("content-type") || "image/webp";
+        res.setHeader("Content-Type", contentType);
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        // Stream the image buffer
+        const buf = await imgResp.arrayBuffer();
+        return res.status(200).end(Buffer.from(buf));
+      } catch {
+        return res.status(502).end();
+      }
+    }
+
+    // ── POST /api/review/clear — reset all pending_review back to qualified and delete their social_contents
+    if (apiPath === "/review/clear" && method === "POST") {
+      const pendingRows = await supabase("properties", { query: "select=id&status=eq.pending_review" });
+      const ids: number[] = (pendingRows || []).map((r: any) => r.id);
+      if (ids.length > 0) {
+        const idList = `(${ids.join(",")})`;
+        await supabase("social_contents", { method: "DELETE", query: `property_id=in.${idList}` });
+        await supabase("properties", {
+          method: "PATCH",
+          query: `status=eq.pending_review`,
+          body: { status: "qualified", updated_at: new Date().toISOString() },
+          prefer: "return=minimal",
+        });
+      }
+      return res.status(200).json({ cleared: ids.length });
+    }
+
     // ── GET /api/review
     if (apiPath === "/review" && method === "GET") {
       const result = await handleGetReview();
@@ -1279,7 +1517,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ── POST /api/generate
     if (apiPath === "/generate" && method === "POST") {
       const { limit } = req.body || {};
-      const result = await handleGenerate(limit ?? 10);
+      const result = await handleGenerate(limit ?? 3);
       return res.status(200).json(result);
     }
 

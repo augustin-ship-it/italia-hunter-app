@@ -9,6 +9,9 @@ import {
   type StatsResponse,
   type PropertyWithSocial,
 } from "@shared/schema";
+import { computeRealEstatePornScore, REVIEW_SCORE_THRESHOLD, REVIEW_MIN_PHOTOS } from "./scorer";
+import { generateContent } from "./tweet-generator";
+import { buildPhotoSet } from "./photo-service";
 
 // Helper: convert DB row (snake_case) to Property (camelCase)
 function rowToProperty(row: any): Property {
@@ -40,6 +43,8 @@ function rowToProperty(row: any): Property {
     locationScore: row.location_score,
     characterScore: row.character_score,
     socialPotentialScore: row.social_potential_score,
+    realEstatePornScore: row.real_estate_porn_score ?? 0,
+    reviewFlaggedAt: row.review_flagged_at ?? null,
     pricePerSqm: row.price_per_sqm,
     nearestAirport: row.nearest_airport,
     airportDistanceKm: row.airport_distance_km,
@@ -55,10 +60,13 @@ function rowToSocialContent(row: any): SocialContent {
     id: row.id,
     propertyId: row.property_id,
     instagramCaption: row.instagram_caption,
+    instagramFirstComment: row.instagram_first_comment ?? null,
     twitterPost: row.twitter_post,
+    tweetThread: row.tweet_thread ? JSON.parse(row.tweet_thread) : null,
     reelScript: row.reel_script,
     summary: row.summary,
     carouselPhotos: row.carousel_photos ? JSON.parse(row.carousel_photos) : null,
+    twitterPhotos: row.twitter_photos ? JSON.parse(row.twitter_photos) : null,
     instagramStatus: row.instagram_status as ContentApproval,
     twitterStatus: row.twitter_status as ContentApproval,
     reelStatus: row.reel_status as ContentApproval,
@@ -245,10 +253,13 @@ export class SqliteStorage implements IStorage {
         composite_score, value_score, sea_score, airport_score,
         location_score, character_score, social_potential_score,
         price_per_sqm, nearest_airport, airport_distance_km, distance_to_sea_km,
+        real_estate_porn_score,
         status, batch_date, created_at, updated_at
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'qualified', ?, datetime('now'), datetime('now')
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?,
+        'qualified', ?, datetime('now'), datetime('now')
       )
     `);
 
@@ -278,6 +289,8 @@ export class SqliteStorage implements IStorage {
         const existing = findByExternalId.get(item.id) as any;
         const photosJson = item.photos ? JSON.stringify(item.photos) : null;
 
+        const pornScore = computeRealEstatePornScore(item);
+
         if (existing) {
           // Update scores, photos, etc. but preserve user-set status
           updateProp.run(
@@ -293,6 +306,8 @@ export class SqliteStorage implements IStorage {
             item.airport_distance_km ?? null, item.distance_to_sea_km ?? null,
             today, item.id
           );
+          // Update porn score separately (safe even if column was just added)
+          db.prepare("UPDATE properties SET real_estate_porn_score = ? WHERE external_id = ?").run(pornScore, item.id);
 
           // Update social content if provided
           if (item.summary || item.instagram_caption || item.twitter_post || item.reel_script) {
@@ -317,6 +332,7 @@ export class SqliteStorage implements IStorage {
             item.location_score, item.character_score, item.social_potential_score ?? 0,
             item.price_per_m2 ?? null, item.nearest_airport ?? null,
             item.airport_distance_km ?? null, item.distance_to_sea_km ?? null,
+            pornScore,
             today
           );
 
@@ -570,6 +586,170 @@ export class SqliteStorage implements IStorage {
       regionBreakdown,
       latestBatch,
     };
+  }
+
+  // ── v2 Review Queue methods ─────────────────────────────────────────
+
+  /** Get top 20 properties ready for review (pending_review status, sorted by porn score) */
+  async getReviewQueue(limit = 20): Promise<PropertyWithSocial[]> {
+    const rows = db.prepare(`
+      SELECT p.*, s.id as s_id, s.property_id as s_property_id,
+        s.instagram_caption, s.instagram_first_comment,
+        s.twitter_post, s.tweet_thread, s.reel_script, s.summary as s_summary,
+        s.carousel_photos as s_carousel_photos, s.twitter_photos as s_twitter_photos,
+        s.instagram_status, s.twitter_status, s.reel_status, s.generated_at
+      FROM properties p
+      INNER JOIN social_contents s ON s.property_id = p.id
+      WHERE p.status = 'pending_review'
+      ORDER BY p.real_estate_porn_score DESC
+      LIMIT ?
+    `).all(limit) as any[];
+
+    return rows.map((row) => {
+      const property = rowToProperty(row);
+      const socialContent: SocialContent = {
+        id: row.s_id,
+        propertyId: row.s_property_id,
+        instagramCaption: row.instagram_caption,
+        instagramFirstComment: row.instagram_first_comment ?? null,
+        twitterPost: row.twitter_post,
+        tweetThread: row.tweet_thread ? JSON.parse(row.tweet_thread) : null,
+        reelScript: row.reel_script,
+        summary: row.s_summary,
+        carouselPhotos: row.s_carousel_photos ? JSON.parse(row.s_carousel_photos) : null,
+        twitterPhotos: row.s_twitter_photos ? JSON.parse(row.s_twitter_photos) : null,
+        instagramStatus: row.instagram_status,
+        twitterStatus: row.twitter_status,
+        reelStatus: row.reel_status,
+        generatedAt: row.generated_at,
+      };
+      return { ...property, socialContent };
+    });
+  }
+
+  /** Accept: approve twitter content + push to Buffer queue */
+  async acceptProperty(propertyId: number): Promise<void> {
+    db.prepare(`UPDATE social_contents SET twitter_status = 'approved', instagram_status = 'approved' WHERE property_id = ?`).run(propertyId);
+    db.prepare(`UPDATE properties SET status = 'content_ready', updated_at = datetime('now') WHERE id = ?`).run(propertyId);
+  }
+
+  /** Reject: mark as rejected, remove from review queue */
+  async rejectProperty(propertyId: number): Promise<void> {
+    db.prepare(`UPDATE properties SET status = 'rejected', updated_at = datetime('now') WHERE id = ?`).run(propertyId);
+  }
+
+  /**
+   * Generate content for a single property:
+   * 1. Build photo set (HD attempt)
+   * 2. Generate tweet (+ thread) + IG caption via Claude
+   * 3. Save to social_contents
+   * 4. Set property status to pending_review
+   */
+  async generateForProperty(propertyId: number): Promise<boolean> {
+    const row = db.prepare("SELECT * FROM properties WHERE id = ?").get(propertyId) as any;
+    if (!row) return false;
+
+    const pornScore: number = row.real_estate_porn_score ?? computeRealEstatePornScore(row);
+    const photosCount: number = row.photos_count ?? 0;
+
+    if (pornScore < REVIEW_SCORE_THRESHOLD || photosCount < REVIEW_MIN_PHOTOS) {
+      return false; // doesn't qualify
+    }
+
+    // Build photo set
+    const photos: string[] = row.photos ? JSON.parse(row.photos) : [];
+    const photoSet = await buildPhotoSet(row.lead_photo, photos, row.photos_count);
+
+    // Generate tweets + captions
+    const content = await generateContent(
+      {
+        title: row.title,
+        description: row.description,
+        price: row.price,
+        size: row.size,
+        rooms: row.rooms,
+        bathrooms: row.bathrooms,
+        town: row.town,
+        province: row.province,
+        region: row.region,
+        url: row.url,
+        property_type: row.property_type,
+        distance_to_sea_km: row.distance_to_sea_km,
+        nearest_airport: row.nearest_airport,
+        airport_distance_km: row.airport_distance_km,
+        price_per_m2: row.price_per_sqm,
+        photos_count: row.photos_count,
+      },
+      true // use thread if enough photos
+    );
+
+    const thread = [content.tweet1, content.tweet2, content.tweet3].filter(Boolean) as string[];
+    const mainTweet = content.tweet1;
+
+    db.prepare(`
+      INSERT INTO social_contents (
+        property_id, instagram_caption, instagram_first_comment,
+        twitter_post, tweet_thread,
+        carousel_photos, twitter_photos,
+        instagram_status, twitter_status, reel_status, generated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', 'pending', datetime('now'))
+      ON CONFLICT(property_id) DO UPDATE SET
+        instagram_caption = excluded.instagram_caption,
+        instagram_first_comment = excluded.instagram_first_comment,
+        twitter_post = excluded.twitter_post,
+        tweet_thread = excluded.tweet_thread,
+        carousel_photos = excluded.carousel_photos,
+        twitter_photos = excluded.twitter_photos,
+        generated_at = datetime('now')
+    `).run(
+      propertyId,
+      content.instagramCaption,
+      content.instagramHashtags,
+      mainTweet,
+      JSON.stringify(thread),
+      JSON.stringify(photoSet.instagram),
+      JSON.stringify(photoSet.twitter),
+    );
+
+    // Mark as pending_review with timestamp
+    db.prepare(`
+      UPDATE properties SET status = 'pending_review', review_flagged_at = datetime('now'),
+        real_estate_porn_score = ?, updated_at = datetime('now') WHERE id = ?
+    `).run(pornScore, propertyId);
+
+    return true;
+  }
+
+  /**
+   * Autopilot: find properties eligible for auto-approve (pending_review > 48h)
+   * Returns up to `limit` properties ordered by porn score
+   */
+  async getAutopilotEligible(limit = 10): Promise<Property[]> {
+    const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString().replace("T", " ").slice(0, 19);
+    const rows = db.prepare(`
+      SELECT * FROM properties
+      WHERE status = 'pending_review'
+        AND review_flagged_at < ?
+      ORDER BY real_estate_porn_score DESC
+      LIMIT ?
+    `).all(cutoff, limit) as any[];
+    return rows.map(rowToProperty);
+  }
+
+  /** Count properties that are qualified and not yet in review queue */
+  async countPendingGeneration(): Promise<number> {
+    const row = db.prepare(`
+      SELECT COUNT(*) as c FROM properties
+      WHERE status = 'qualified'
+        AND real_estate_porn_score >= ?
+        AND (lead_photo IS NOT NULL OR photos IS NOT NULL)
+    `).get(REVIEW_SCORE_THRESHOLD) as any;
+    return row.c;
+  }
+
+  /** Log autopilot action */
+  logAutopilot(propertyId: number, action: string, reason?: string): void {
+    db.prepare(`INSERT INTO autopilot_logs (property_id, action, reason) VALUES (?, ?, ?)`).run(propertyId, action, reason ?? null);
   }
 }
 

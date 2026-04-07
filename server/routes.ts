@@ -1,6 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { type Server } from "http";
 import { storage } from "./storage";
+import db from "./db";
 import { importPropertySchema, propertyStatusEnum, contentApprovalEnum } from "@shared/schema";
 import { z } from "zod";
 import crypto from "crypto";
@@ -397,6 +398,246 @@ export async function registerRoutes(
       } else {
         return res.status(502).json({ message: result?.message || "Unknown Buffer error" });
       }
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ── v2 Review Queue ──────────────────────────────────────────────────
+
+  // GET /api/review — top 20 properties pending review
+  app.get("/api/review", async (req, res) => {
+    try {
+      const limit = req.query.limit ? Number(req.query.limit) : 20;
+      const queue = await storage.getReviewQueue(limit);
+      res.json({ items: queue, total: queue.length });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // POST /api/review/:id/accept — accept property → Buffer queue
+  app.post("/api/review/:id/accept", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      await storage.acceptProperty(id);
+
+      const property = await storage.getProperty(id);
+      if (!property || !property.socialContent) {
+        return res.status(404).json({ message: "Property or social content not found" });
+      }
+
+      const BUFFER_TOKEN = process.env.BUFFER_TOKEN || "H5wEKXsJAJctr0cTYMDTUs1UbD0zZWUPnfv19IxhRpq";
+      const BUFFER_X_CHANNEL = process.env.BUFFER_X_CHANNEL || "69b337177be9f8b1714da5e4";
+
+      const social = property.socialContent;
+      const thread: string[] = social.tweetThread || (social.twitterPost ? [social.twitterPost] : []);
+      const photos = social.twitterPhotos || social.carouselPhotos || [];
+
+      if (thread.length === 0) {
+        return res.status(400).json({ message: "No tweet content to publish" });
+      }
+
+      const mutation = `mutation CreatePost($input: CreatePostInput!) {
+        createPost(input: $input) {
+          ... on PostActionSuccess { post { id status } }
+          ... on NotFoundError { message }
+          ... on UnauthorizedError { message }
+          ... on UnexpectedError { message }
+          ... on InvalidInputError { message }
+          ... on LimitReachedError { message }
+        }
+      }`;
+
+      async function postToBuffer(text: string, withPhotos: string[]) {
+        const input: any = {
+          channelId: BUFFER_X_CHANNEL,
+          text,
+          schedulingType: "automatic",
+          mode: "addToQueue",
+        };
+        if (withPhotos.length > 0) {
+          input.assets = { images: withPhotos.slice(0, 4).map((u: string) => ({ url: u })) };
+        }
+        const r = await fetch("https://api.buffer.com/graphql", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${BUFFER_TOKEN}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ query: mutation, variables: { input } }),
+        });
+        return r.json();
+      }
+
+      // Post thread: tweet 1 with photos, tweet 2+3 as text only
+      const results = [];
+      for (let i = 0; i < thread.length; i++) {
+        const withPhotos = i === 0 ? photos.slice(0, 4) : [];
+        const data: any = await postToBuffer(thread[i], withPhotos);
+        const post = data.data?.createPost?.post;
+        if (!post) {
+          const err = data.data?.createPost?.message;
+          // If first tweet failed with photos, retry without
+          if (i === 0 && withPhotos.length > 0) {
+            const retry: any = await postToBuffer(thread[i], []);
+            results.push(retry.data?.createPost?.post);
+          } else {
+            return res.status(502).json({ message: err || "Buffer error on tweet " + (i + 1) });
+          }
+        } else {
+          results.push(post);
+        }
+      }
+
+      // Mark as posted
+      db.prepare("UPDATE properties SET status = 'posted', updated_at = datetime('now') WHERE id = ?").run(id);
+      db.prepare("UPDATE social_contents SET twitter_status = 'posted' WHERE property_id = ?").run(id);
+
+      res.json({ success: true, thread: thread.length, bufferPosts: results.map((p: any) => p?.id) });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // POST /api/review/:id/reject — reject property
+  app.post("/api/review/:id/reject", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      await storage.rejectProperty(id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // POST /api/review/:id/tweet — update tweet text
+  app.patch("/api/review/:id/tweet", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { tweetIndex, text } = req.body;
+      if (typeof text !== "string") return res.status(400).json({ message: "text required" });
+
+      if (tweetIndex === undefined || tweetIndex === 0) {
+        // Update main tweet
+        db.prepare("UPDATE social_contents SET twitter_post = ? WHERE property_id = ?").run(text, id);
+      }
+      // Update thread at index
+      const row: any = db.prepare("SELECT tweet_thread FROM social_contents WHERE property_id = ?").get(id);
+      if (row?.tweet_thread) {
+        const thread = JSON.parse(row.tweet_thread);
+        if (typeof tweetIndex === "number" && tweetIndex < thread.length) {
+          thread[tweetIndex] = text;
+          db.prepare("UPDATE social_contents SET tweet_thread = ? WHERE property_id = ?").run(JSON.stringify(thread), id);
+        }
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // POST /api/generate — trigger tweet generation for top N qualifying properties
+  app.post("/api/generate", async (req, res) => {
+    try {
+      const limit = req.body.limit ?? 20;
+      // Get top qualifying properties not yet in review queue
+      const rows: any[] = (db as any).prepare(`
+        SELECT id FROM properties
+        WHERE status = 'qualified'
+          AND real_estate_porn_score >= 35
+          AND (lead_photo IS NOT NULL OR photos IS NOT NULL)
+        ORDER BY real_estate_porn_score DESC
+        LIMIT ?
+      `).all(limit);
+
+      res.json({ queued: rows.length, message: `Generating content for ${rows.length} properties...` });
+
+      // Fire & forget (async)
+      setImmediate(async () => {
+        for (const row of rows) {
+          try {
+            await storage.generateForProperty(row.id);
+          } catch (e) {
+            console.error(`[generate] Failed for property ${row.id}:`, e);
+          }
+        }
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // GET /api/cron/autopilot — called by Vercel cron every 6h
+  // Also callable manually. Checks Buffer queue, auto-approves if < 20 posts pending.
+  app.get("/api/cron/autopilot", async (req, res) => {
+    try {
+      // Verify cron secret or allow pipeline key
+      const cronSecret = process.env.CRON_SECRET || "";
+      const authHeader = req.headers.authorization || "";
+      const apiKey = req.headers["x-api-key"] as string || "";
+      if (cronSecret && authHeader !== `Bearer ${cronSecret}` && apiKey !== PIPELINE_API_KEY) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const BUFFER_TOKEN = process.env.BUFFER_TOKEN || "H5wEKXsJAJctr0cTYMDTUs1UbD0zZWUPnfv19IxhRpq";
+      const BUFFER_X_CHANNEL = process.env.BUFFER_X_CHANNEL || "69b337177be9f8b1714da5e4";
+
+      // Check Buffer queue depth
+      const queueQuery = `query { channel(id: "${BUFFER_X_CHANNEL}") { posts(filter: { status: SCHEDULED }) { edges { node { id } } } } }`;
+      let bufferQueueCount = 999; // default to "full" if we can't check
+      try {
+        const qr = await fetch("https://api.buffer.com/graphql", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${BUFFER_TOKEN}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ query: queueQuery }),
+        });
+        const qdata: any = await qr.json();
+        bufferQueueCount = qdata.data?.channel?.posts?.edges?.length ?? 999;
+      } catch (e) {
+        console.error("[autopilot] Could not check Buffer queue:", e);
+      }
+
+      const TARGET_POSTS = 20; // 5 days × 4/day
+      const needed = Math.max(0, TARGET_POSTS - bufferQueueCount);
+
+      if (needed === 0) {
+        return res.json({ action: "noop", bufferQueueCount, message: "Buffer queue is full enough" });
+      }
+
+      // Get 48h+ pending properties
+      const eligible = await storage.getAutopilotEligible(needed);
+      const autoApproved: number[] = [];
+
+      for (const prop of eligible) {
+        try {
+          const property = await storage.getProperty(prop.id);
+          if (!property?.socialContent) continue;
+
+          const social = property.socialContent;
+          const thread: string[] = social.tweetThread || (social.twitterPost ? [social.twitterPost] : []);
+          if (thread.length === 0) continue;
+
+          const photos = social.twitterPhotos || social.carouselPhotos || [];
+          const mutation = `mutation CreatePost($input: CreatePostInput!) { createPost(input: $input) { ... on PostActionSuccess { post { id } } ... on UnexpectedError { message } } }`;
+
+          for (let i = 0; i < thread.length; i++) {
+            const input: any = { channelId: BUFFER_X_CHANNEL, text: thread[i], schedulingType: "automatic", mode: "addToQueue" };
+            if (i === 0 && photos.length > 0) input.assets = { images: photos.slice(0, 4).map((u: string) => ({ url: u })) };
+            await fetch("https://api.buffer.com/graphql", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${BUFFER_TOKEN}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ query: mutation, variables: { input } }),
+            });
+          }
+
+          db.prepare("UPDATE properties SET status = 'posted', updated_at = datetime('now') WHERE id = ?").run(prop.id);
+          db.prepare("UPDATE social_contents SET twitter_status = 'posted' WHERE property_id = ?").run(prop.id);
+          storage.logAutopilot(prop.id, "auto_approved", `Buffer queue was ${bufferQueueCount}, needed ${needed}`);
+          autoApproved.push(prop.id);
+        } catch (e) {
+          console.error(`[autopilot] Failed for prop ${prop.id}:`, e);
+        }
+      }
+
+      res.json({ action: "auto_approved", count: autoApproved.length, bufferQueueCount, needed });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }

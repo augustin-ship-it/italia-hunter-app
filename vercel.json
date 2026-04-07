@@ -7,7 +7,7 @@
   "functions": {
     "api/**/*.ts": {
       "memory": 1024,
-      "maxDuration": 30,
+      "maxDuration": 60,
       "includeFiles": "seed/**,node_modules/sql.js/dist/sql-wasm.wasm"
     }
   },
@@ -30,5 +30,11 @@
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/[...path]" },
     { "source": "/((?!api/|reels/|photos/).*)", "destination": "/index.html" }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/autopilot",
+      "schedule": "0 8 * * *"
+    }
   ]
 }

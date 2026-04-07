@@ -102,7 +102,34 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_batches_date ON batches(date);
+
+  CREATE TABLE IF NOT EXISTS autopilot_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id INTEGER NOT NULL,
+    action TEXT NOT NULL, -- 'auto_approved', 'auto_skipped'
+    reason TEXT,
+    triggered_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE
+  );
 `);
+
+// ── Migrations (idempotent ALTER TABLE) ─────────────────────────────
+const runMigration = (sql: string) => {
+  try { db.exec(sql); } catch (_) { /* column already exists */ }
+};
+
+// v2 columns on properties
+runMigration("ALTER TABLE properties ADD COLUMN real_estate_porn_score INTEGER NOT NULL DEFAULT 0");
+runMigration("ALTER TABLE properties ADD COLUMN review_flagged_at TEXT");
+
+// v2 columns on social_contents (thread support + instagram first comment + twitter photos)
+runMigration("ALTER TABLE social_contents ADD COLUMN tweet_thread TEXT"); // JSON array of tweet strings
+runMigration("ALTER TABLE social_contents ADD COLUMN instagram_first_comment TEXT"); // hashtags
+runMigration("ALTER TABLE social_contents ADD COLUMN twitter_photos TEXT"); // JSON array of photo URLs for Twitter
+
+// Index for review queue
+runMigration("CREATE INDEX IF NOT EXISTS idx_properties_porn_score ON properties(real_estate_porn_score)");
+runMigration("CREATE INDEX IF NOT EXISTS idx_properties_review_flagged ON properties(review_flagged_at)");
 
 // Seed from SQL dump if database is empty (first deploy)
 const count = (db.prepare("SELECT COUNT(*) as c FROM properties").get() as any).c;

@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from "@/lib/auth";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import PropertyDetail from "@/pages/property-detail";
+import Review from "@/pages/review";
 import Login from "@/pages/login";
 import Layout from "@/components/layout";
 
@@ -15,7 +16,9 @@ function AppRouter() {
   return (
     <Layout>
       <Switch>
-        <Route path="/" component={Dashboard} />
+        <Route path="/" component={Review} />
+        <Route path="/review" component={Review} />
+        <Route path="/dashboard" component={Dashboard} />
         <Route path="/properties/:id" component={PropertyDetail} />
         <Route component={NotFound} />
       </Switch>
