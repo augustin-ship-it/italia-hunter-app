@@ -381,6 +381,28 @@ async function uploadPhotoToStorage(data: ArrayBuffer, filename: string, content
 }
 
 // Push to Buffer: post to X (thread) and Instagram queue
+/**
+ * Returns the next optimal posting slot (ISO string).
+ * Targets EU morning / EU lunch / EU evening / US prime time:
+ *   08:00 CEST = 06:00 UTC | 12:00 CEST = 10:00 UTC
+ *   18:00 CEST = 16:00 UTC | 21:00 CEST = 19:00 UTC
+ * Minimum 45 min ahead to avoid immediate posting.
+ */
+function nextOptimalSlot(minMinutesAhead = 45): string {
+  const SLOTS_UTC = [6, 10, 16, 19]; // hours in UTC
+  const minAheadMs = minMinutesAhead * 60 * 1000;
+  const now = Date.now();
+  for (let daysAhead = 0; daysAhead <= 7; daysAhead++) {
+    for (const hour of SLOTS_UTC) {
+      const d = new Date(now);
+      d.setUTCDate(d.getUTCDate() + daysAhead);
+      d.setUTCHours(hour, 0, 0, 0);
+      if (d.getTime() > now + minAheadMs) return d.toISOString();
+    }
+  }
+  return new Date(now + 2 * 60 * 60 * 1000).toISOString();
+}
+
 async function pushToBuffer(
   prop: any,
   tweetThread: string[],
@@ -405,26 +427,25 @@ async function pushToBuffer(
   const mutation = `
     mutation CreatePost($input: CreatePostInput!) {
       createPost(input: $input) {
-        ... on PostActionSuccess { post { id status } }
+        ... on PostActionSuccess { post { id status scheduledAt } }
         ... on MutationError { message }
       }
     }
   `;
 
   const validPhotos = hostedPhotos.filter(u => u && u.startsWith("http"));
-  // Distribute photos across thread tweets: tweet1→p0, tweet2→p1, tweet3→p2+p3
   const photoAssets = (urls: string[]) =>
     urls.length > 0 ? { images: urls.map(url => ({ url })) } : undefined;
 
-  // For Instagram: all photos on single post
-  const igAssetsInput = photoAssets(validPhotos.slice(0, 4));
+  // Schedule at next EU/US optimal slot (not buffer's default auto-queue)
+  const scheduledAt = nextOptimalSlot();
 
   let ok = false;
 
   // ── X / Twitter: post as thread ──────────────────────────────────
   if (tweetThread.length > 0) {
     const [tweet1, ...rest] = tweetThread;
-    // Distribute: 3 photos per tweet (tweet1→p0-2, tweet2→p3-5, tweet3→p6-8)
+    // 3 photos per tweet: tweet1→p0-2, tweet2→p3-5, tweet3→p6-8
     const t1Assets = photoAssets(validPhotos.slice(0, 3));
     const threadItems = rest.map((text, i) => {
       const start = (i + 1) * 3;
@@ -437,8 +458,8 @@ async function pushToBuffer(
       variables: {
         input: {
           channelId: BUFFER_X_CHANNEL,
-          schedulingType: "automatic",
-          mode: "addToQueue",
+          schedulingType: "scheduled",
+          scheduledAt,
           text: tweet1,
           ...(t1Assets ? { assets: t1Assets } : {}),
           ...(threadItems.length > 0 ? {
@@ -449,36 +470,37 @@ async function pushToBuffer(
     };
     const xResult = await bufferFetch(xBody);
     const xOk = !!xResult?.data?.createPost?.post?.id;
-    if (xOk) console.log("[pushToBuffer] X post queued:", xResult.data.createPost.post.id);
+    if (xOk) console.log("[pushToBuffer] X scheduled:", xResult.data.createPost.post.id, "at", scheduledAt);
     else console.error("[pushToBuffer] X failed:", JSON.stringify(xResult));
     ok = ok || xOk;
   }
 
-  // ── Instagram: single post ────────────────────────────────────────
+  // ── Instagram: carousel (≥2 photos) or single post ───────────────
   if (instagramCaption) {
+    const igPhotos = validPhotos.slice(0, 9); // up to 9 for IG carousel
+    const igAssetsInput = photoAssets(igPhotos);
+    const igType = igPhotos.length > 1 ? "carousel" : "post";
     const igBody = {
       query: mutation,
       variables: {
         input: {
           channelId: BUFFER_IG_CHANNEL,
-          schedulingType: "automatic",
-          mode: "addToQueue",
+          schedulingType: "scheduled",
+          scheduledAt,
           text: instagramCaption,
           ...(igAssetsInput ? { assets: igAssetsInput } : {}),
-          ...(instagramFirstComment ? {
-            metadata: {
-              instagram: {
-                firstComment: instagramFirstComment,
-                type: "post",
-              },
+          metadata: {
+            instagram: {
+              ...(instagramFirstComment ? { firstComment: instagramFirstComment } : {}),
+              type: igType,
             },
-          } : {}),
+          },
         },
       },
     };
     const igResult = await bufferFetch(igBody);
     const igOk = !!igResult?.data?.createPost?.post?.id;
-    if (igOk) console.log("[pushToBuffer] IG post queued:", igResult.data.createPost.post.id);
+    if (igOk) console.log("[pushToBuffer] IG scheduled:", igResult.data.createPost.post.id, `type=${igType}`, "at", scheduledAt);
     else console.error("[pushToBuffer] IG failed:", JSON.stringify(igResult));
     ok = ok || igOk;
   }
