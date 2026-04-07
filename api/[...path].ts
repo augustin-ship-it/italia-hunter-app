@@ -388,23 +388,28 @@ async function uploadPhotoToStorage(data: ArrayBuffer, filename: string, content
  *   18:00 CEST = 16:00 UTC | 21:00 CEST = 19:00 UTC
  * Minimum 45 min ahead to avoid immediate posting.
  */
-function nextOptimalSlot(minMinutesAhead = 45): string {
+function nextOptimalSlot(slotOffset = 0, minMinutesAhead = 45): string {
   // Target windows in UTC (CEST = UTC+2): EU morning / EU lunch / EU evening / US prime time
+  // slotOffset=0 → next available slot, slotOffset=1 → one after that, etc.
   const SLOTS_UTC = [6, 10, 16, 19];
   const minAheadMs = minMinutesAhead * 60 * 1000;
   const now = Date.now();
-  for (let daysAhead = 0; daysAhead <= 7; daysAhead++) {
+  let slotsFound = 0;
+  for (let daysAhead = 0; daysAhead <= 14; daysAhead++) {
     for (const hour of SLOTS_UTC) {
       const d = new Date(now);
       d.setUTCDate(d.getUTCDate() + daysAhead);
       d.setUTCHours(hour, 0, 0, 0);
-      // Random jitter ±(15-25 min) so posts don't look like a cron job
-      const jitter = (Math.floor(Math.random() * 21) - 10 + (Math.random() > 0.5 ? 8 : -8)) * 60 * 1000;
+      // Random jitter ±15 min so posts don't look robotic
+      const jitter = (Math.floor(Math.random() * 31) - 15) * 60 * 1000;
       d.setTime(d.getTime() + jitter);
-      if (d.getTime() > now + minAheadMs) return d.toISOString();
+      if (d.getTime() > now + minAheadMs) {
+        if (slotsFound === slotOffset) return d.toISOString();
+        slotsFound++;
+      }
     }
   }
-  return new Date(now + 2 * 60 * 60 * 1000).toISOString();
+  return new Date(now + (slotOffset + 2) * 60 * 60 * 1000).toISOString();
 }
 
 async function pushToBuffer(
@@ -412,12 +417,13 @@ async function pushToBuffer(
   tweetThread: string[],
   instagramCaption: string,
   instagramFirstComment: string,
-  hostedPhotos: string[]
+  hostedPhotos: string[],
+  slotOffset = 0
 ): Promise<boolean> {
   const BUFFER_TOKEN = process.env.BUFFER_TOKEN;
   const BUFFER_X_CHANNEL = process.env.BUFFER_X_CHANNEL || "69b337177be9f8b1714da5e4";
   const BUFFER_IG_CHANNEL = process.env.BUFFER_IG_CHANNEL || "69b336d87be9f8b1714da537";
-  if (!BUFFER_TOKEN) return false;
+  if (!BUFFER_TOKEN) { console.error("[pushToBuffer] BUFFER_TOKEN not set"); return false; }
 
   const bufferFetch = async (input: any) => {
     const resp = await fetch("https://api.buffer.com/graphql", {
@@ -441,8 +447,8 @@ async function pushToBuffer(
   const photoAssets = (urls: string[]) =>
     urls.length > 0 ? { images: urls.map(url => ({ url })) } : undefined;
 
-  // Schedule at next EU/US optimal slot (not buffer's default auto-queue)
-  const scheduledAt = nextOptimalSlot();
+  // Schedule at next EU/US optimal slot — distributed by slotOffset
+  const scheduledAt = nextOptimalSlot(slotOffset);
 
   let ok = false;
 
@@ -630,7 +636,7 @@ async function handleEditTweet(id: number, tweetIndex: number, text: string): Pr
   return { ok: true };
 }
 
-async function handleGenerate(limit = 3): Promise<{ generated: number; skipped: number }> {
+async function handleGenerate(limit = 3, baseSlotOffset = 0): Promise<{ generated: number; skipped: number }> {
   // Get top qualifying properties (not yet pending_review/posted/rejected) by porn score
   const rows = await supabase("properties", {
     query: `select=*&status=eq.qualified&real_estate_porn_score=gte.35&order=real_estate_porn_score.desc&limit=${limit}`,
@@ -663,15 +669,17 @@ async function handleGenerate(limit = 3): Promise<{ generated: number; skipped: 
   const existingSocial = await supabase("social_contents", { query: "select=property_id" });
   const existingIds = new Set((existingSocial || []).map((r: any) => r.property_id));
 
-  // Re-fetch after scoring — get more than needed so we can filter
+  // Re-fetch after scoring — only properties with photos already in Supabase Storage
+  // This prevents picking properties with expired Apify URLs that would produce 0-photo posts
   const candidates = await supabase("properties", {
-    query: `select=*&status=eq.qualified&real_estate_porn_score=gte.1&order=real_estate_porn_score.desc&limit=${limit * 10}`,
+    query: `select=*&status=eq.qualified&real_estate_porn_score=gte.1&lead_photo=like.*supabase.co*&order=real_estate_porn_score.desc&limit=${limit * 10}`,
   });
   const toGenerate = (candidates || []).filter((r: any) => !existingIds.has(r.id)).slice(0, limit);
   if (!toGenerate || toGenerate.length === 0) return { generated: 0, skipped: 0 };
 
   const now = new Date().toISOString();
   let generated = 0, skipped = 0;
+  let slotIndex = baseSlotOffset; // Starts at baseSlotOffset so runs don't collide on same slots
 
   for (const prop of toGenerate) {
     try {
@@ -718,6 +726,12 @@ async function handleGenerate(limit = 3): Promise<{ generated: number; skipped: 
         }
       }
       // No fallback to expired URLs — only confirmed Supabase Storage photos go to Buffer
+      // Skip this property if no photos — photos are mandatory
+      if (photos.length === 0) {
+        console.warn(`[generate] prop ${prop.id} has 0 photos — skipping`);
+        skipped++;
+        continue;
+      }
 
       // Upsert social content — pass arrays directly as JSONB (no JSON.stringify)
       await supabase("social_contents", {
@@ -737,11 +751,16 @@ async function handleGenerate(limit = 3): Promise<{ generated: number; skipped: 
         prefer: "return=minimal,resolution=merge-duplicates",
       });
 
-      // Mark as pending_review
+      // Auto-push to Buffer directly — no manual review step
+      const pushed = await pushToBuffer(prop, tweetThread, instagramCaption, instagramFirstComment, photos, slotIndex);
+      slotIndex++;
+
+      // Mark as posted (Buffer received it) or pending_review if push failed
+      const newStatus = pushed ? "posted" : "pending_review";
       await supabase("properties", {
         method: "PATCH",
         query: `id=eq.${prop.id}`,
-        body: { status: "pending_review", review_flagged_at: now, updated_at: now },
+        body: { status: newStatus, review_flagged_at: now, updated_at: now },
         prefer: "return=minimal",
       });
 
@@ -1075,14 +1094,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
+    // ── Cron routes are exempt from auth (called by Vercel infrastructure)
+    const isCronRoute = apiPath.startsWith("/cron/");
+
     // ── Auth middleware: all other routes require valid token or API key
-    const authHeader = req.headers.authorization || "";
-    const apiKey = (req.headers["x-api-key"] as string) || "";
-    const token = authHeader.replace("Bearer ", "");
-    const PIPELINE_API_KEY = process.env.PIPELINE_API_KEY || "italia-pipeline-key-2026";
-    const isApiKeyAuth = apiKey === PIPELINE_API_KEY;
-    if (!isApiKeyAuth && !verifyToken(token)) {
-      return res.status(401).json({ message: "Unauthorized — please log in" });
+    if (!isCronRoute) {
+      const authHeader = req.headers.authorization || "";
+      const apiKey = (req.headers["x-api-key"] as string) || "";
+      const token = authHeader.replace("Bearer ", "");
+      const PIPELINE_API_KEY = process.env.PIPELINE_API_KEY || "italia-pipeline-key-2026";
+      const isApiKeyAuth = apiKey === PIPELINE_API_KEY;
+      if (!isApiKeyAuth && !verifyToken(token)) {
+        return res.status(401).json({ message: "Unauthorized — please log in" });
+      }
     }
 
     // ── GET /api/properties
@@ -1558,27 +1582,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ── GET /api/cron/autopilot
     if (apiPath === "/cron/autopilot" && method === "GET") {
-      // Auto-approve pending_review properties older than 48h (max 5)
-      const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-      const stale = await supabase("properties", {
-        query: `select=id&status=eq.pending_review&review_flagged_at=lt.${cutoff}&order=real_estate_porn_score.desc&limit=5`,
+      // Count posts already scheduled in Buffer (properties posted in the last 30 days)
+      const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const recentPosted = await supabase("properties", {
+        query: `select=id&status=eq.posted&updated_at=gte.${since30d}`,
       });
-      let autoApproved = 0;
-      for (const row of stale || []) {
-        const r = await handleAcceptProperty(row.id);
-        if (r.ok) autoApproved++;
-      }
-      // Trigger generation to keep queue full
-      const pendingCount = await supabase("properties", {
-        query: "select=id&status=eq.pending_review",
-      });
-      const queueSize = (pendingCount || []).length;
+      const alreadyQueued = (recentPosted || []).length;
+
+      // Target: 4 posts/day × 30 days = 120 posts. Generate enough to fill remaining slots.
+      const TARGET = 120;
+      const toGenerate = Math.max(0, Math.min(TARGET - alreadyQueued, 10)); // max 10 per cron run (timeout safety)
+
       let generated = 0;
-      if (queueSize < 5) {
-        const gen = await handleGenerate(10 - queueSize);
+      if (toGenerate > 0) {
+        const gen = await handleGenerate(toGenerate, alreadyQueued);
         generated = gen.generated;
       }
-      return res.status(200).json({ autoApproved, queueSize, generated });
+
+      return res.status(200).json({ alreadyQueued, toGenerate, generated });
     }
 
     return res.status(404).json({ message: `Route not found: ${method} /api${apiPath}` });
